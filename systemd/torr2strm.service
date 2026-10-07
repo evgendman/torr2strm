@@ -1,0 +1,19 @@
+[Unit]
+Description=TorrServer to multi-output STRM tree synchronizer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flock -n /run/torr2strm.lock /usr/bin/python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml
+WorkingDirectory=/opt/torr2strm
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

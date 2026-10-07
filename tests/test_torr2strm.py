@@ -1,0 +1,514 @@
+import json
+import tempfile
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from torr2strm import (
+    JacRedMatch,
+    MediaInfoResolver,
+    OutputRunner,
+    OutputSpec,
+    SyncCoordinator,
+    bounded_strm_leaf,
+    category_from_jacred_result,
+    extract_btih,
+    media_quality,
+    parse_snapshot,
+    usable_ffprobe,
+    atomic_write_text,
+    migrate_nfo_v1_to_v2,
+    nfo_format_version,
+)
+
+
+class FakeClient:
+    base_url = "http://127.0.0.1:8092"
+
+    def __init__(self, torrents, probes=None):
+        self.torrents = {t["Hash"]: t for t in torrents}
+        self.removed = []
+        self.probes = probes or {}
+        self.ffprobe_calls = []
+
+    def list_torrents(self):
+        return [
+            {"Hash": h, "Title": t["Title"], "Category": t.get("Category", ""), "Data": t.get("Data", "")}
+            for h, t in self.torrents.items()
+        ]
+
+    def get_torrent(self, h):
+        from torr2strm import TorrServerNotFound
+        if h not in self.torrents:
+            raise TorrServerNotFound(h)
+        return self.torrents[h]
+
+    def remove_torrent(self, h):
+        self.removed.append(h)
+        self.torrents.pop(h, None)
+
+    def torrent_present(self, h):
+        return h in self.torrents
+
+    def get_ffprobe(self, h, file_id, timeout=None):
+        self.ffprobe_calls.append((h, file_id))
+        key = (h, file_id)
+        payload = self.probes.get(key)
+        if payload is None:
+            raise RuntimeError(f"no fake probe for {key}")
+        return payload
+
+    def load_torrent_metadata(self, h):
+        return None
+
+
+class FakeJacRed:
+    enabled = True
+
+    def __init__(self, matches=None):
+        self.matches = matches or {}
+        self.calls = []
+
+    def find_match(self, torrent):
+        self.calls.append(torrent.hash)
+        return self.matches.get(torrent.hash)
+
+
+def cfg(jelly_root, kodi_root, remove=False, jacred=True):
+    return {
+        "torrserver": {
+            "url": "http://127.0.0.1:8092",
+            "timeout_sec": 2,
+            "remove_timeout_sec": 5,
+            "metadata_wait_sec": 0,
+            "metadata_poll_sec": 0.01,
+        },
+        "outputs": {
+            "jellyfin": {
+                "root": str(jelly_root),
+                "manifest": ".torr2strm/manifest.json",
+                "enabled": True,
+                "remove_torrent_on_strm_delete": remove,
+                "max_torrent_removals_per_run": 1,
+            },
+            "kodi": {
+                "root": str(kodi_root),
+                "manifest": ".torr2strm/manifest.json",
+                "enabled": True,
+            },
+        },
+        "sync": {
+            "tv_unmatched_season": 0,
+            "video_extensions": {".mkv", ".mp4"},
+        },
+        "quality": {"timeout_sec": 2, "retries": 0},
+        "jacred": {
+            "url": "https://jac.red" if jacred else "",
+            "api_key": "",
+            "indexer_id": 1,
+            "limit": 100,
+            "timeout_sec": 2,
+            "retries": 0,
+        },
+        "logging": {"level": "ERROR"},
+    }
+
+
+def torrent(h="a" * 40, title="Film", category="movie", paths=None, lengths=None, data=None):
+    paths = paths or ["Film.mkv"]
+    lengths = lengths or [100] * len(paths)
+    files = [
+        {"Id": i + 1, "Path": p, "Length": lengths[i] if i < len(lengths) else 100}
+        for i, p in enumerate(paths)
+    ]
+    return {
+        "Hash": h,
+        "Title": title,
+        "Category": category,
+        "Data": json.dumps(data or {}, ensure_ascii=False),
+        "FileStats": files,
+    }
+
+
+def probe(width=1920, height=1080, codec="h264", audio=True, hdr=None):
+    video = {
+        "index": 0,
+        "codec_name": codec,
+        "codec_type": "video",
+        "width": width,
+        "height": height,
+        "bit_rate": "5000000",
+        "avg_frame_rate": "24000/1001",
+        "tags": {"BPS": "5000000", "DURATION": "00:10:00.000000000"},
+    }
+    if hdr == "dv":
+        video["dv_profile"] = 8
+        video["color_transfer"] = "smpte2084"
+    elif hdr == "hdr10":
+        video["color_transfer"] = "smpte2084"
+    streams = [video]
+    if audio:
+        streams.append({
+            "index": 1,
+            "codec_name": "ac3",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "channel_layout": "stereo",
+            "bit_rate": "384000",
+            "tags": {"title": "RUS", "language": "rus", "DURATION": "00:10:00.000000000"},
+        })
+    return {"streams": streams}
+
+
+def match_for(h, payload=None, category=None, magnet=None):
+    return JacRedMatch(
+        result={"infoHash": h, "category": category or "", "magnetUrl": magnet or ""},
+        ffprobe=payload,
+        magnet=magnet,
+        category=category,
+        query="fake",
+    )
+
+
+def run(cfg_data, client, jac):
+    return SyncCoordinator(cfg_data, client, jac, dry_run=False).run()
+
+
+def test_extract_btih_accepts_magnet():
+    h = "064de6b3010e8a7f8df1098b8bab407af0405f86"
+    assert extract_btih(f"magnet:?xt=urn:btih:{h}&dn=test") == h
+
+
+def test_quality_is_only_from_ffprobe():
+    assert media_quality(probe(1920, 1080)) == "1080p"
+    assert media_quality(probe(3840, 1600)) == "4K"
+    assert usable_ffprobe(probe()) is not None
+
+
+def test_long_utf8_strm_nfo_names_are_bounded_and_atomic_write_succeeds():
+    long_name = (
+        "Престиж - The Prestige - 2006 - ДБ, ПМ, ПД, АП (Гаврилов, Визгунов, "
+        "Сербин, Королев), СТ - 4K, HEVC, Dolby Vision Profile 8 - WEB-DL "
+        "(2160p) | Дубляж | Сербин | Гаврилов | Визгунов | Королев"
+    )
+    leaf = bounded_strm_leaf(long_name, "deec5dec")
+    assert len((leaf + ".strm").encode("utf-8")) <= 255
+    assert len((leaf + ".nfo").encode("utf-8")) <= 255
+    assert leaf.endswith("[deec5dec]")
+    with tempfile.TemporaryDirectory() as td:
+        nfo = Path(td) / (leaf + ".nfo")
+        atomic_write_text(nfo, "<movie/>\n")
+        assert nfo.read_text(encoding="utf-8") == "<movie/>\n"
+
+
+def test_category_mapping_movie_tv_anime():
+    assert category_from_jacred_result({"categories": [2045]}) == "movie"
+    assert category_from_jacred_result({"categories": [5000]}) == "tv"
+    assert category_from_jacred_result({"categories": [5060]}) == "_uncategorized"
+
+
+def test_jacred_exact_match_supplies_category_and_ffprobe_and_kodi_magnet_once():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "1" * 40
+        magnet = f"magnet:?xt=urn:btih:{h}&dn=Example.Movie"
+        t = torrent(h=h, title="Example Movie 2026", category="", paths=["Example.Movie.mkv"], data={})
+        payload = probe(1920, 1080)
+        result = {"infoHash": h, "categories": [2000], "magnetUrl": magnet, "ffprobe": payload["streams"]}
+        jac = FakeJacRed({h: JacRedMatch(result, payload, magnet, "movie", "fake")})
+        client = FakeClient([t], probes={(h, 1): payload})
+        c = cfg(jr, kr, jacred=True)
+        assert run(c, client, jac) == 0
+        assert jac.calls == [h]
+        assert client.ffprobe_calls == []
+        jelly = list((jr / "movie" / "1080p").rglob("*.strm"))
+        kodi = list((kr / "movie" / "1080p").rglob("*.strm"))
+        assert len(jelly) == 1
+        assert len(kodi) == 1
+        assert "plugin.video.elementum/play?uri=" in kodi[0].read_text()
+        assert "%3A%3Fxt%3Durn%3Abtih%3A" in kodi[0].read_text()
+        assert "&oindex=" not in kodi[0].read_text()
+
+
+def test_kodi_tv_uses_zero_based_original_filestats_order():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "2" * 40
+        t = torrent(
+            h=h,
+            title="Widow's Bay S01 2026",
+            category="tv",
+            paths=["back.jpg", "cover.jpg", "Widow.s.Bay.S01E01.mkv", "Widow.s.Bay.S01E02.mkv"],
+            lengths=[100, 200, 500, 500],
+        )
+        probes = {(h, 3): probe(3840, 2160), (h, 4): probe(3840, 2160)}
+        client = FakeClient([t], probes=probes)
+        jac = FakeJacRed({h: None})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        strms = sorted((kr / "tv" / "4K").rglob("*.strm"))
+        assert len(strms) == 2
+        contents = {p.read_text() for p in strms}
+        assert any("&oindex=2" in x for x in contents)
+        assert any("&oindex=3" in x for x in contents)
+
+
+def test_second_run_reuses_nfo_across_both_outputs():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "3" * 40
+        t = torrent(h=h, title="Film 2026", category="movie")
+        payload = probe(1920, 1080)
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({h: match_for(h, payload, "movie", f"magnet:?xt=urn:btih:{h}&dn=Film")})
+        c = cfg(jr, kr, jacred=True)
+        assert run(c, client, jac) == 0
+        first_calls = list(jac.calls)
+        client.ffprobe_calls.clear()
+        jac.calls.clear()
+        assert run(c, client, jac) == 0
+        assert client.ffprobe_calls == []
+        assert jac.calls == [h]
+        # There are two output copies of the same NFO, but the media probe is shared/reused.
+
+
+def test_jellyfin_reverse_delete_is_authoritative_and_kodi_is_skipped():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "4" * 40
+        t = torrent(h=h, title="Film", category="movie")
+        payload = probe()
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({h: match_for(h, payload, "movie", f"magnet:?xt=urn:btih:{h}&dn=Film")})
+        c = cfg(jr, kr, remove=True, jacred=True)
+        assert run(c, client, jac) == 0
+        jelly_strm = next((jr / "movie" / "1080p").rglob("*.strm"))
+        jelly_strm.unlink()
+        client.ffprobe_calls.clear()
+        assert run(c, client, jac) == 0
+        assert client.removed == [h]
+        assert not client.torrent_present(h)
+        assert not list((jr / "movie" / "1080p").rglob("*.strm"))
+        assert not list((kr / "movie" / "1080p").rglob("*.strm"))
+
+
+def test_kodi_is_read_only_when_strm_deleted():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "5" * 40
+        t = torrent(h=h, title="Film", category="movie")
+        payload = probe()
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({h: match_for(h, payload, "movie", f"magnet:?xt=urn:btih:{h}&dn=Film")})
+        c = cfg(jr, kr, remove=False, jacred=True)
+        assert run(c, client, jac) == 0
+        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
+        kodi_strm.unlink()
+        assert run(c, client, jac) == 0
+        assert client.removed == []
+        assert kodi_strm.is_file()
+
+
+def test_provider_ids_and_base_metadata_are_written_to_nfo():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "6" * 40
+        data = {
+            "tmdbId": 1124,
+            "imdbId": "tt0482571",
+            "tvdbId": 302,
+            "tvMazeId": 1234,
+            "traktId": 5678,
+            "seriesOriginalTitle": "Loki",
+            "year": 2021,
+            "firstAired": "2021-06-09",
+            "episodeAirDate": "2021-06-10",
+        }
+        t = torrent(h=h, title="Loki S01", category="tv", paths=["Loki.S01E01.mkv"], data=data)
+        payload = probe(1920, 872)
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        nfo = next((jr / "tv" / "1080p").rglob("Loki.S01E01.mkv.nfo"))
+        text = nfo.read_text(encoding="utf-8")
+        assert "<tmdbid>1124</tmdbid>" in text
+        assert "<imdbid>tt0482571</imdbid>" in text
+        assert "<tvdbid>302</tvdbid>" in text
+        assert '<uniqueid type="tvmaze">1234</uniqueid>' in text
+        assert '<uniqueid type="trakt">5678</uniqueid>' in text
+        assert "<aired>2021-06-10</aired>" in text
+        tvshow = next((jr / "tv" / "1080p").rglob("tvshow.nfo"))
+        tvshow_text = tvshow.read_text(encoding="utf-8")
+        assert "<premiered>2021-06-09</premiered>" in tvshow_text
+        assert nfo_format_version(tvshow_text) == 2
+        assert tvshow_text.rstrip().endswith("https://www.themoviedb.org/tv/1124")
+        episode_text = nfo.read_text(encoding="utf-8")
+        assert nfo_format_version(episode_text) == 2
+        assert "https://www.themoviedb.org/tv/1124" not in episode_text
+
+
+def test_manifest_v4_exists_in_both_outputs():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "7" * 40
+        t = torrent(h=h)
+        payload = probe()
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        for root in (jr, kr):
+            manifest = json.loads((root / ".torr2strm" / "manifest.json").read_text())
+            assert manifest["version"] == 4
+            assert manifest["output"] in {"jellyfin", "kodi"}
+            assert manifest["root"] == str(root)
+
+
+def test_old_title_quality_is_not_used():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "8" * 40
+        t = torrent(h=h, title="Film 2160p", category="movie")
+        client = FakeClient([t], probes={})
+        jac = FakeJacRed({})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        assert not list(jr.rglob("*.strm"))
+        assert not list(kr.rglob("*.strm"))
+
+
+def test_blank_category_from_jacred_tv_and_anime_stays_uncategorized():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h_tv = "9" * 40
+        h_anime = "a" * 40
+        tv = torrent(h=h_tv, title="Example Series S01", category="", paths=["Example.Series.S01E01.mkv"])
+        anime = torrent(h=h_anime, title="Example Anime S01", category="", paths=["Example.Anime.S01E01.mkv"])
+        p = probe(1920, 1080)
+        matches = {
+            h_tv: match_for(h_tv, p, "tv", f"magnet:?xt=urn:btih:{h_tv}&dn=Example.Series"),
+            h_anime: match_for(h_anime, p, "_uncategorized", f"magnet:?xt=urn:btih:{h_anime}&dn=Example.Anime"),
+        }
+        client = FakeClient([tv, anime], probes={(h_tv, 1): p, (h_anime, 1): p})
+        jac = FakeJacRed(matches)
+        c = cfg(jr, kr, jacred=True)
+        assert run(c, client, jac) == 0
+        assert list((jr / "tv" / "1080p").rglob("*.strm"))
+        assert list((jr / "_uncategorized" / "1080p").rglob("*.strm"))
+        assert not list((jr / "tv" / "1080p").rglob("Example.Anime*"))
+
+
+def test_nfo_format_v2_and_combination_tmdb_url_are_generated():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "c" * 40
+        t = torrent(h=h, title="The Prestige 2006", category="movie", data={"tmdbId": 1124, "imdbId": "tt0482571"})
+        payload = probe(3840, 2160, codec="hevc")
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        nfo = next((jr / "movie" / "4K").rglob("*.nfo"))
+        text = nfo.read_text(encoding="utf-8")
+        assert nfo_format_version(text) == 2
+        assert '<torr2strm formatversion="2"' in text
+        assert text.rstrip().endswith("https://www.themoviedb.org/movie/1124")
+        assert MediaInfoResolver._nfo_is_usable(nfo)
+
+
+def test_legacy_nfo_v1_migrates_without_losing_metadata_and_gets_tmdb_url():
+    legacy = """<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<movie>
+  <title>The Prestige</title>
+  <tmdbid>1124</tmdbid>
+  <imdbid>tt0482571</imdbid>
+  <tag>USER_NOTE</tag>
+  <fileinfo><streamdetails><video><codec>h264</codec><width>1920</width><height>1080</height></video></streamdetails></fileinfo>
+</movie>
+<!-- generated by torr2strm 1.3.1; media_info_source=nfo -->
+"""
+    migrated, changed = migrate_nfo_v1_to_v2(legacy)
+    assert changed
+    assert nfo_format_version(migrated) == 2
+    assert "<tag>USER_NOTE</tag>" in migrated
+    assert '<torr2strm formatversion="2"' in migrated
+    assert migrated.rstrip().endswith("https://www.themoviedb.org/movie/1124")
+
+
+def test_normal_sync_migrates_legacy_nfos_without_reprobing():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "d" * 40
+        t = torrent(h=h, title="Film 2026", category="movie", data={"tmdbId": 1124, "imdbId": "tt0482571"})
+        payload = probe(1920, 1080)
+        client = FakeClient([t], probes={(h, 1): payload})
+        jac = FakeJacRed({})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        nfos = list(jr.rglob("*.nfo")) + list(kr.rglob("*.nfo"))
+        assert nfos
+        for path in nfos:
+            text = path.read_text(encoding="utf-8")
+            xml_end = text.rfind("</movie>") + len("</movie>")
+            legacy = text[:xml_end]
+            import re
+            legacy = re.sub(r"\s*<torr2strm[^>]*/>", "", legacy, count=1)
+            legacy += "\n<!-- generated by torr2strm 1.3.1; media_info_source=nfo -->\n"
+            path.write_text(legacy, encoding="utf-8")
+        client.ffprobe_calls.clear()
+        assert run(c, client, jac) == 0
+        assert client.ffprobe_calls == []
+        for path in nfos:
+            text = path.read_text(encoding="utf-8")
+            assert nfo_format_version(text) == 2
+            assert text.rstrip().endswith("https://www.themoviedb.org/movie/1124")
+
+
+def test_nfo_is_identical_between_enabled_outputs_and_contains_hdr_and_streamdetails():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr = base / "jelly"
+        kr = base / "kodi"
+        h = "b" * 40
+        t = torrent(h=h, title="Prestige 2006", category="movie", data={"tmdbId": 1124, "imdbId": "tt0482571", "originalTitle": "The Prestige", "releaseDate": "2006-10-20"})
+        p = probe(3840, 2160, codec="hevc", hdr="dv")
+        client = FakeClient([t], probes={(h, 1): p})
+        jac = FakeJacRed({})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, jac) == 0
+        jf_nfo = next((jr / "movie" / "4K").rglob("*.nfo"))
+        kd_nfo = next((kr / "movie" / "4K").rglob("*.nfo"))
+        assert jf_nfo.read_text(encoding="utf-8") == kd_nfo.read_text(encoding="utf-8")
+        text = jf_nfo.read_text(encoding="utf-8")
+        assert "<originaltitle>The Prestige</originaltitle>" in text
+        assert "<tmdbid>1124</tmdbid>" in text
+        assert "<imdbid>tt0482571</imdbid>" in text
+        assert "<hdrtype>dolbyvision</hdrtype>" in text
+        assert "<width>3840</width>" in text
+        assert "<height>2160</height>" in text
+        assert "<fileinfo><streamdetails>" in text

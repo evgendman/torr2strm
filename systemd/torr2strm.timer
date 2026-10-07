@@ -1,0 +1,12 @@
+[Unit]
+Description=Run TorrServer to STRM synchronizer periodically
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=15s
+AccuracySec=1s
+Unit=torr2strm.service
+
+[Install]
+WantedBy=timers.target

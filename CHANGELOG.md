@@ -1,0 +1,39 @@
+# Changelog
+
+## 1.3.2
+
+- Added independent `NFO_FORMAT_VERSION=2`, separate from software and manifest versions.
+- Added automatic migration of legacy/unversioned NFOs from format v1 to v2 during normal synchronization, without re-probing media.
+- Added `<torr2strm formatversion="2" />` to generated NFO XML.
+- Added Kodi Combination NFO support with one canonical TMDb URL after the XML root for movie NFOs and `tvshow.nfo`; episode NFOs remain XML-only.
+- NFO readers now correctly parse Kodi Combination NFOs instead of treating the trailing URL as malformed XML.
+- Legacy migration preserves existing XML metadata and existing scraper URL hints when no trustworthy TMDb ID is available.
+
+## 1.3.1
+
+- Fixed UTF-8 filename length handling for generated `.strm` and `.nfo` files.
+- Long output basenames are truncated on UTF-8 character boundaries with a short stable identity suffix; short existing names remain unchanged.
+- Atomic writes now use a short temporary filename prefix, preventing `ENAMETOOLONG` caused by long final basenames.
+
+## 1.3.0
+
+- Added two independent output trees with separate root markers and manifests.
+- Jellyfin output remains the authoritative/read-write view; Kodi output is read-only.
+- If a managed Jellyfin STRM is deleted and reverse deletion is enabled, the TorrServer torrent is permanently removed with `action=rem`; Kodi is never allowed to remove a source torrent.
+- If the source torrent disappears from TorrServer, its managed reflection is removed from every enabled output tree.
+- A successful Jellyfin reverse deletion also suppresses same-run recreation in the Kodi output and removes its stale reflection.
+- JacRed exact-match lookup is performed once per torrent and its result is shared by all outputs and by media-info resolution.
+- Exact JacRed match may now supply `movie`/`tv` category for TorrServer items whose category is actually blank. JacRed `anime` remains `_uncategorized`.
+- JacRed exact match can also supply the full magnet used by the Kodi/Elementum tree. If no full magnet is available, a BTIH+display-name magnet is constructed from the TorrServer source.
+- Kodi/Elementum movies use one torrent-level `.strm` per torrent and no `oindex`.
+- Kodi/Elementum TV uses one `.strm` per playable file and passes the original zero-based FileStats order as `oindex`.
+- Original FileStats order is now preserved separately from the human/path sorting used by filesystem layout.
+- The same NFO content is duplicated into all enabled output trees.
+- A valid NFO found in any output tree can satisfy media-info cache reuse for all other output trees, avoiding another ffprobe call.
+- Added `tvshow.nfo` for TV torrent roots.
+- Expanded NFO provider IDs to use nested `providerIds` plus known Arr-style direct fields and safe title fallbacks.
+- Added base metadata fields already known to the importer: `title`, `originaltitle`, `sorttitle`, `year`, `premiered`, `releasedate`, and episode `aired` where available.
+- Added video `hdrtype`, bit depth and stereomode when present in ffprobe.
+- Removed the old release-title quality fallback permanently; quality remains ffprobe-only.
+- Per-torrent ffprobe failures remain recoverable and do not make the service exit non-zero.
+- Manifest format bumped to v4; old v3 state is intentionally rejected. Start with clean output roots when upgrading from v1.2.x.

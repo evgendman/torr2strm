@@ -1,0 +1,61 @@
+# torr2strm v1.3.1
+# Two independent materialized trees are generated from one TorrServer source.
+# Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
+
+[torrserver]
+url = "http://127.0.0.1:8092"
+timeout_sec = 20
+remove_timeout_sec = 60
+metadata_wait_sec = 10
+metadata_poll_sec = 0.5
+
+[outputs.jellyfin]
+# Existing Jellyfin libraries can continue using this root.
+root = "/mnt/torr2strm-media"
+manifest = ".torr2strm/manifest.json"
+enabled = true
+
+# Jellyfin is the only authoritative/read-write output. If true and a managed
+# Jellyfin STRM is deleted by the user, the source torrent is permanently
+# removed from TorrServer with action=rem. Never use action=drop.
+remove_torrent_on_strm_delete = false
+max_torrent_removals_per_run = 1
+
+[outputs.kodi]
+# Separate read-only Kodi/Elementum materialized tree.
+root = "/mnt/torr2strm-media-kodi"
+manifest = ".torr2strm/manifest.json"
+enabled = true
+
+[sync]
+# Season used when a TV episode cannot be inferred from its file path/title.
+# 0 maps to Jellyfin/Kodi Specials semantics.
+tv_unmatched_season = 0
+
+# These are video extensions only. Audio/subtitle/image files never get STRM files.
+video_extensions = [
+  ".mkv", ".mp4", ".m4v", ".avi", ".mov", ".wmv", ".webm",
+  ".ts", ".m2ts", ".mts", ".mpeg", ".mpg", ".mxf", ".flv",
+  ".vob", ".3gp", ".ogv", ".ogm", ".rm", ".rmvb", ".divx",
+  ".asf", ".asx", ".f4v", ".m2v", ".m2t", ".tp", ".ty", ".wtv"
+]
+
+[quality]
+# Only real ffprobe is accepted. 2160-class -> 4K; everything else -> 1080p.
+timeout_sec = 12
+retries = 0
+
+[jacred]
+# The public jac.red instance used in our tests:
+#   url = "https://jac.red"
+#   indexer_id = 1
+# Empty URL disables optional JacRed enrichment.
+url = "https://jac.red"
+api_key = ""
+indexer_id = 1
+limit = 100
+timeout_sec = 10
+retries = 0
+
+[logging]
+level = "INFO"
