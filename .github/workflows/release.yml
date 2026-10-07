@@ -1,0 +1,90 @@
+name: Publish release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - RELEASE_VERSION
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          requested="$(tr -d '[:space:]' < RELEASE_VERSION)"
+          test -n "$version"
+          test "$version" = "$requested"
+          python - "$version" <<'PY'
+          import re
+          import sys
+          version = sys.argv[1]
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version):
+              raise SystemExit(f"Invalid version: {version}")
+          PY
+          python - "$version" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+          version = sys.argv[1]
+          source = Path("torr2strm.py").read_text(encoding="utf-8")
+          match = re.search(r'^VERSION\s*=\s*"([^"]+)"', source, re.MULTILINE)
+          if not match:
+              raise SystemExit("VERSION constant not found in torr2strm.py")
+          if match.group(1) != version:
+              raise SystemExit(
+                  f"VERSION mismatch: file={version!r}, source={match.group(1)!r}"
+              )
+          PY
+
+      - name: Run test suite
+        run: |
+          python -m compileall -q torr2strm.py tests
+          python -m unittest discover -s tests -v
+
+      - name: Build release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          name="torr2strm-v$version"
+          rm -rf "$name" "torr2strm-v$version.tar.gz" SHA256SUMS
+
+          mkdir "$name"
+          cp torr2strm.py CHANGELOG.md README.md install.sh VERSION "$name"/
+          cp -a etc systemd tests docs project "$name"/
+
+          tar -czf "torr2strm-v$version.tar.gz" "$name"
+          sha256sum "torr2strm-v$version.tar.gz" > SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="v$version"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists; refusing to replace it." >&2
+            exit 1
+          fi
+
+          gh release create "$tag"             --repo "$GITHUB_REPOSITORY"             --target "$GITHUB_SHA"             --title "torr2strm v$version"             --generate-notes             "torr2strm-v$version.tar.gz"             SHA256SUMS
