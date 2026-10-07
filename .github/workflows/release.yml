@@ -22,7 +22,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.13"
-          cache: "pip"
 
       - name: Install test dependencies
         run: python -m pip install --upgrade pytest
@@ -35,6 +34,7 @@ jobs:
           requested="$(tr -d '[:space:]' < RELEASE_VERSION)"
           test -n "$version"
           test "$version" = "$requested"
+
           python - "$version" <<'PY'
           import re
           import sys
@@ -42,6 +42,7 @@ jobs:
           if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version):
               raise SystemExit(f"Invalid version: {version}")
           PY
+
           python - "$version" <<'PY'
           from pathlib import Path
           import re
@@ -68,9 +69,10 @@ jobs:
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
           name="torr2strm-v$version"
-          rm -rf "$name" "torr2strm-v$version.tar.gz" SHA256SUMS
 
+          rm -rf "$name" "torr2strm-v$version.tar.gz" SHA256SUMS
           mkdir "$name"
+
           cp torr2strm.py CHANGELOG.md README.md install.sh VERSION "$name"/
           cp -a etc systemd tests docs project "$name"/
 
