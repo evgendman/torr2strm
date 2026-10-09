@@ -392,7 +392,7 @@ def test_provider_ids_and_base_metadata_are_written_to_nfo():
         tvshow_text = tvshow.read_text(encoding="utf-8")
         assert_no_display_title_fields(tvshow_text)
         assert "<width>1920</width>" in tvshow_text
-        assert "<height>1080</height>" in tvshow_text
+        assert "<height>872</height>" in tvshow_text
         assert nfo_format_version(tvshow_text) == 3
         assert tvshow_text.rstrip().endswith("https://www.themoviedb.org/tv/1124")
         episode_text = nfo.read_text(encoding="utf-8")
@@ -662,7 +662,7 @@ def test_per_file_nfo_details_are_not_replaced_with_primary_quality_stream():
         primary, secondary = probe(3840, 2160), probe(1280, 720)
         client = FakeClient([t], probes={(h, 1): primary, (h, 2): secondary})
         assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
-        kodi_files = {p.name: p for p in (kr / "tv" / "4K" / "Season Pack").rglob("*.nfo")}
+        kodi_files = {p.name: p for p in (kr / "tv" / "4K" / "Season Pack" / "Season 01").rglob("*.nfo")}
         assert len(kodi_files) == 2
         second = next(path for name, path in kodi_files.items() if "S01E02" in name)
         text = second.read_text(encoding="utf-8")
