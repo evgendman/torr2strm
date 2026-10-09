@@ -374,6 +374,10 @@ def quality_label_from_metadata(metadata: dict[str, Any] | None) -> str | None:
                     label = quality_label_from_text(candidate)
                     if label:
                         return label
+                    if re.fullmatch(r"\s*(?:4320|2160|1440|1080|720|576|480|360|240)\s*", str(candidate)):
+                        label = quality_label_from_text(f"{str(candidate).strip()}p")
+                        if label:
+                            return label
         if isinstance(value, dict) and normalized_key in {"info", "metadata", "release", "media", "mediainfo", "details"}:
             label = quality_label_from_metadata(value)
             if label:
@@ -1657,6 +1661,7 @@ class MediaInfoResolver:
         # additional per-file probe below solely to keep its own NFO accurate.
         root_quality: str | None = None
         quality_label: str | None = None
+        attempted: set[int] = set()
         primary_cached = cached.get(primary.file_id)
         if primary_cached:
             details = self._quality_details_from_nfo(primary_cached[0])
@@ -1665,6 +1670,7 @@ class MediaInfoResolver:
                 LOG.info("QUALITY_FROM_NFO hash=%s root=%s label=%s path=%s", torrent.hash, root_quality, quality_label, primary_cached[0])
 
         if quality_label is None and primary.file_id not in cached:
+            attempted.add(primary.file_id)
             primary_payload: dict[str, Any] | None = None
             if match is not None and match.ffprobe is not None and usable_ffprobe(match.ffprobe) is not None:
                 primary_payload = usable_ffprobe(match.ffprobe)
@@ -1691,8 +1697,9 @@ class MediaInfoResolver:
         # the media item next to it, not copy technical stream details from the
         # primary torrent file.
         for file in required:
-            if file.file_id in cached or file.file_id in probes:
+            if file.file_id in cached or file.file_id in probes or file.file_id in attempted:
                 continue
+            attempted.add(file.file_id)
             try:
                 payload = self._probe_torrserver(torrent, file)
                 probes[file.file_id] = payload
