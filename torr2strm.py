@@ -1519,9 +1519,30 @@ class JacRedClient:
         exact: list[tuple[dict[str, Any], str]] = []
         for query in self._candidate_queries(torrent):
             for result in self._get_json(query, search_type):
-                result_hash = canonical_hash(str(result.get("infoHash") or result.get("guid") or ""))
-                if not result_hash:
-                    result_hash = extract_btih(result.get("magnetUrl") or result.get("downloadUrl")) or ""
+                # Search APIs commonly use "guid" for a result-page URL, not a
+                # BTIH. Inspect each possible source independently so an
+                # unusable non-empty GUID cannot mask a valid magnet URL/hash.
+                mappings = [result]
+                info = result.get("info")
+                if isinstance(info, dict):
+                    mappings.append(info)
+                hash_candidates: list[Any] = []
+                for mapping in mappings:
+                    for key in ("infoHash", "hash", "btih", "guid", "magnet", "magnetUrl", "downloadUrl", "torrentUrl"):
+                        value = mapping.get(key)
+                        if value not in (None, ""):
+                            hash_candidates.append(value)
+                result_hash = ""
+                for candidate in hash_candidates:
+                    candidate_text = urllib.parse.unquote(str(candidate)).strip()
+                    if re.fullmatch(r"[0-9a-fA-F]{40}", candidate_text):
+                        result_hash = candidate_text.lower()
+                    elif re.fullmatch(r"[A-Za-z2-7]{32}", candidate_text, flags=re.IGNORECASE):
+                        result_hash = extract_btih(f"urn:btih:{candidate_text}") or ""
+                    else:
+                        result_hash = extract_btih(candidate_text) or ""
+                    if result_hash:
+                        break
                 if result_hash == target:
                     exact.append((result, query))
 
