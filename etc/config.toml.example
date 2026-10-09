@@ -43,14 +43,16 @@ video_extensions = [
 
 
 [jacred]
-# The URL is a service base URL, not a release-page URL; code appends /api/v1/search.
+# torr2strm calls the Prowlarr REST API; it does not call public https://jac.red directly.
 # A candidate result is accepted only when its BTIH/infoHash exactly matches TorrServer.
+# Configure public https://jac.red as a Torznab indexer inside Prowlarr first.
+# Put the Prowlarr base URL here; get the API key in Prowlarr > Settings > General.
+# Set indexer_id to the JacRed indexer's numeric ID in Prowlarr, or 0 to search all indexers.
 # The exact result may supply category, already-existing ffprobe JSON, magnet URL and provider IDs.
 # torr2strm never calls TorrServer /ffp/ or runs ffprobe itself.
-# The public jac.red instance used in our tests; an empty URL disables enrichment.
-url = "https://jac.red"
-api_key = ""
-indexer_id = 1
+url = "http://127.0.0.1:9696"
+api_key = "PUT_PROWLARR_API_KEY_HERE"
+indexer_id = 0
 limit = 100
 timeout_sec = 10
 retries = 0
