@@ -2,12 +2,15 @@ import json
 import tempfile
 from pathlib import Path
 import sys
+import urllib.parse
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from torr2strm import (
     JacRedMatch,
     JacRedClient,
+    parse_torznab_results,
     MediaInfoResolver,
     OutputRunner,
     OutputSpec,
@@ -857,3 +860,85 @@ def test_jacred_exact_match_accepts_infohash_and_base32_btih():
     match = client.find_match(snap)
     assert match is not None
     assert extract_btih(f"magnet:?xt=urn:btih:{h}") == h
+
+
+TORZNAB_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>JacRed</title>
+    <item>
+      <title>Ballerina.2025.1080p.BDRip</title>
+      <guid isPermaLink="false">0123456789abcdef0123456789abcdef01234567</guid>
+      <link>magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Ballerina</link>
+      <category>2000</category>
+      <enclosure url="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Ballerina" length="12345" type="application/x-bittorrent;x-scheme-handler=magnet" />
+      <torznab:attr name="infohash" value="0123456789abcdef0123456789abcdef01234567" />
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Ballerina" />
+      <torznab:attr name="category" value="2000" />
+      <torznab:attr name="year" value="2025" />
+    </item>
+  </channel>
+</rss>
+"""
+
+
+def test_parse_jacred_torznab_xml_exposes_infohash_magnet_and_category():
+    results = parse_torznab_results(TORZNAB_XML)
+    assert len(results) == 1
+    item = results[0]
+    assert item["title"] == "Ballerina.2025.1080p.BDRip"
+    assert item["infoHash"] == "0123456789abcdef0123456789abcdef01234567"
+    assert item["magnetUrl"].startswith("magnet:?xt=urn:btih:")
+    assert item["category"] == "2000"
+    assert category_from_jacred_result(item) == "movie"
+
+
+def test_jacred_direct_search_uses_public_torznab_api_not_prowlarr_json():
+    class Response:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self):
+            return TORZNAB_XML.encode("utf-8")
+
+    client = JacRedClient({
+        "url": "https://jac.red",
+        "api_key": "optional-key",
+        "indexer_id": 1,  # old config key; direct Torznab ignores this
+        "limit": 25,
+        "timeout_sec": 1,
+        "retries": 0,
+    })
+    with patch("urllib.request.urlopen", return_value=Response()) as mocked:
+        items = client._get_json("Ballerina", "movie")
+    request = mocked.call_args.args[0]
+    parsed = urllib.parse.urlparse(request.full_url)
+    params = dict(urllib.parse.parse_qsl(parsed.query))
+    assert parsed.netloc == "jac.red"
+    assert parsed.path == "/torznab/api"
+    assert params["t"] == "movie"
+    assert params["q"] == "Ballerina"
+    assert params["limit"] == "25"
+    assert params["extended"] == "1"
+    assert params["apikey"] == "optional-key"
+    assert "indexerIds" not in params
+    assert len(items) == 1
+
+
+def test_jacred_match_accepts_xml_infohash_and_ignores_nonmatching_guid_candidate():
+    h = "0123456789abcdef0123456789abcdef01234567"
+    snap = parse_snapshot(torrent(h=h, title="Ballerina", category="movie"), h)
+    client = JacRedClient({"url": "https://jac.red", "indexer_id": 0})
+    client._candidate_queries = lambda _torrent: ["Ballerina"]
+    # A URL/page-like or unrelated GUID/hash must not prevent checking magnetUrl.
+    client._get_json = lambda _query, _type: [{
+        "guid": "https://jac.red/details/6731022",
+        "hash": "1111111111111111111111111111111111111111",
+        "magnetUrl": f"magnet:?xt=urn:btih:{h}&dn=Ballerina",
+        "category": "2000",
+        "title": "Ballerina.2025.1080p.BDRip",
+    }]
+    match = client.find_match(snap)
+    assert match is not None
+    assert match.magnet.endswith("&dn=Ballerina")
