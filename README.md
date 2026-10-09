@@ -80,12 +80,12 @@ Kodi's normalized tree is separate from Jellyfin's existing tree. Identified rel
 
 ## JacRed and media information
 
-JacRed is optional enrichment, not the source of truth. TorrServer remains authoritative for the torrent list, hash and FileStats. The `--jacred` option accepts a **base service URL** (for example `https://jac.red`), not a page URL for a particular release and not a hash.
+JacRed is optional enrichment, not the source of truth. TorrServer remains authoritative for the torrent list, hash and FileStats. The client calls the **Prowlarr REST API**, so `[jacred].url` must be the Prowlarr base URL (for example `http://127.0.0.1:9696`), not the public JacRed Torznab URL `https://jac.red`. Prowlarr's API key and the ID of the JacRed indexer in Prowlarr must also be configured.
 
 ### How a JacRed match is found
 
 1. torr2strm prepares up to six distinct candidate title queries from the TorrServer title, the normalized series title for TV, and available metadata title fields.
-2. It queries JacRed's Prowlarr-compatible search endpoint, `/api/v1/search`. The search type is `tvsearch` for known TV, `movie` for known movies, or general `search` when TorrServer category is unknown. The configured indexer ID, result limit and optional API key are applied to the request.
+2. It queries Prowlarr's `GET /api/v1/search` endpoint. The search type is `tvsearch` for known TV, `movie` for known movies, or general `search` when TorrServer category is unknown. Prowlarr routes the query to its configured JacRed Torznab indexer. The configured Prowlarr indexer ID, result limit and API key are applied to the request.
 3. Search results are not accepted merely because their titles look similar. The result's `infoHash`, `guid`, or BTIH extracted from its magnet/download URL must equal the TorrServer hash.
 4. If several exact matches exist, the implementation prefers the result with usable ffprobe data, then a magnet link, then recognizable category information. All enrichment fields are taken from that same selected result.
 
@@ -215,7 +215,7 @@ Example:
 
 ```bash
 sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-run
-sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred https://jac.red --jacred-indexer-id 1 --jacred-limit 100 --dry-run
+sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred http://127.0.0.1:9696 --jacred-indexer-id 1 --jacred-limit 100 --dry-run
 ```
 
 ## Service behavior
