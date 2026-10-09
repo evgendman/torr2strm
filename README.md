@@ -152,7 +152,7 @@ For TV the `oindex` value is the zero-based original FileStats order, not the on
 NFOs contain only reliable identifiers and technical stream data. They deliberately do not contain human-readable display names: Kodi was observed to replace its localized scraper title with the NFO title after scraping, and Jellyfin should retrieve localized names from provider IDs.
 
 - **Movie sidecar NFO:** trusted provider IDs, ffprobe stream details for the specific movie media item, and a Kodi Combination NFO scraper URL when a trustworthy TMDb ID is available.
-- **Series-root `tvshow.nfo`:** trusted series IDs and a Combination NFO scraper URL when a trustworthy TMDb ID is available. No title or arbitrary episode stream details.
+- **Series-root `tvshow.nfo`:** trusted series IDs, a Combination NFO scraper URL when a trustworthy TMDb ID is available, and `fileinfo/streamdetails` copied from a deterministic representative release in that quality root. No display title is written. The episode sidecar NFO remains the authoritative technical profile for its specific file.
 - **Episode sidecar NFO:** ordinary `episodedetails` format, trusted IDs, known season/episode coordinates, and ffprobe stream details for the exact source file. No Combination NFO URL.
 - **No NFO type writes** `title`, `originaltitle`, `sorttitle`, `showtitle`, `name`, year/date display metadata, or any other human-facing title field.
 - Per-file ffprobe details remain tied to their own STRM/NFO. The primary file determines torrent-level quality only; it does not replace the episode/file technical details.
