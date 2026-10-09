@@ -704,3 +704,57 @@ def test_bounded_kodi_leaf_preserves_quality_and_hash_when_title_is_too_long():
     duplicate = bounded_kodi_leaf("ОченьДлинноеНазвание" * 30, "720p", "a1b2c3d4", file_ordinal=3)
     assert len((duplicate + ".strm").encode("utf-8")) <= 255
     assert duplicate.endswith(" — 720p [a1b2c3d4] [file03]")
+
+
+def test_kodi_different_series_ids_with_same_name_and_year_get_id_suffixes():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h1, h2 = "b1" * 20, "b2" * 20
+        t1 = torrent(h=h1, title="Same.Show.S01E01", category="tv", paths=["S01E01.mkv"],
+                     data={"seriesTvdbId": 111, "seriesTitle": "Same Show", "seriesYear": 2024})
+        t2 = torrent(h=h2, title="Same.Show.S01E01", category="tv", paths=["S01E01.mkv"],
+                     data={"seriesTvdbId": 222, "seriesTitle": "Same Show", "seriesYear": 2024})
+        p = probe(1920, 1080)
+        client = FakeClient([t1, t2], probes={(h1, 1): p, (h2, 1): p})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        dirs = sorted(p.name for p in (kr / "tv" / "1080p").iterdir() if p.is_dir())
+        assert dirs == ["Same Show (2024) [tvdb-111]", "Same Show (2024) [tvdb-222]"]
+
+
+def test_kodi_movie_versions_share_movie_directory_and_remain_distinct():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h1, h2 = "c1" * 20, "c2" * 20
+        data = {"tmdbId": 157336, "movieTitle": "Interstellar", "year": 2014}
+        t1 = torrent(h=h1, title="Interstellar.720p", category="movie", data={**data, "quality": "720p"})
+        t2 = torrent(h=h2, title="Interstellar.1080p", category="movie", data={**data, "quality": "1080p"})
+        client = FakeClient([t1, t2], probes={})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        root = kr / "movie" / "1080p" / "Interstellar (2014)"
+        strms = sorted(root.glob("*.strm"))
+        assert len(strms) == 2
+        assert any("720p [c1c1c1c1]" in p.name for p in strms)
+        assert any("1080p [c2c2c2c2]" in p.name for p in strms)
+        assert all("plugin.video.elementum/play?uri=" in p.read_text() for p in strms)
+        assert all("&oindex=" not in p.read_text() for p in strms)
+
+
+def test_kodi_short_hash_is_extended_only_when_first_eight_characters_collide():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        prefix = "12345678"
+        h1, h2 = prefix + "a" * 32, prefix + "b" * 32
+        t1 = torrent(h=h1, title="Collision.Show.S01E01", category="tv", paths=["S01E01.mkv"],
+                     data={"seriesTmdbId": 7001, "seriesTitle": "Collision Show"})
+        t2 = torrent(h=h2, title="Collision.Show.S01E02", category="tv", paths=["S01E02.mkv"],
+                     data={"seriesTmdbId": 7001, "seriesTitle": "Collision Show"})
+        p = probe(1920, 1080)
+        client = FakeClient([t1, t2], probes={(h1, 1): p, (h2, 1): p})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        names = sorted(p.name for p in (kr / "tv" / "1080p" / "Collision Show" / "Season 01").glob("*.strm"))
+        assert len(names) == 2
+        assert any("[12345678a]" in name for name in names)
+        assert any("[12345678b]" in name for name in names)
