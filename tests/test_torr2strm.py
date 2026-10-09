@@ -276,7 +276,7 @@ def test_kodi_tv_uses_zero_based_original_filestats_order():
         h = "2" * 40
         t = torrent(
             h=h,
-            title="Widow's Bay S01 2026",
+            title="Widow's Bay S01 2026 2160p",
             category="tv",
             paths=["back.jpg", "cover.jpg", "Widow.s.Bay.S01E01.mkv", "Widow.s.Bay.S01E02.mkv"],
             lengths=[100, 200, 500, 500],
@@ -288,6 +288,7 @@ def test_kodi_tv_uses_zero_based_original_filestats_order():
         assert run(c, client, jac) == 0
         strms = sorted((kr / "tv" / "4K").rglob("*.strm"))
         assert len(strms) == 2
+        assert client.ffprobe_calls == []
         contents = {p.read_text() for p in strms}
         assert any("&oindex=2" in x for x in contents)
         assert any("&oindex=3" in x for x in contents)
@@ -375,9 +376,10 @@ def test_provider_ids_and_base_metadata_are_written_to_nfo():
         t = torrent(h=h, title="Loki S01", category="tv", paths=["Loki.S01E01.mkv"], data=data)
         payload = probe(1920, 872)
         client = FakeClient([t], probes={(h, 1): payload})
-        jac = FakeJacRed({})
-        c = cfg(jr, kr, jacred=False)
+        jac = FakeJacRed({h: match_for(h, payload, "tv", f"magnet:?xt=urn:btih:{h}&dn=Loki")})
+        c = cfg(jr, kr, jacred=True)
         assert run(c, client, jac) == 0
+        assert client.ffprobe_calls == []
         nfo = next((jr / "tv" / "1080p").rglob("Loki.S01E01.mkv.nfo"))
         text = nfo.read_text(encoding="utf-8")
         assert "<tmdbid>1124</tmdbid>" in text
@@ -434,7 +436,7 @@ def test_release_title_quality_fallback_materializes_unknown_media():
         kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
         assert "2160p HDR" in kodi_strm.name
         assert "[88888888]" in kodi_strm.name
-        assert client.ffprobe_calls == [(h, 1)]
+        assert client.ffprobe_calls == []
 
 
 def test_blank_category_from_jacred_tv_and_anime_stays_uncategorized():
@@ -469,9 +471,10 @@ def test_nfo_format_v3_and_combination_tmdb_url_are_generated():
         t = torrent(h=h, title="The Prestige 2006", category="movie", data={"tmdbId": 1124, "imdbId": "tt0482571"})
         payload = probe(3840, 2160, codec="hevc")
         client = FakeClient([t], probes={(h, 1): payload})
-        jac = FakeJacRed({})
-        c = cfg(jr, kr, jacred=False)
+        jac = FakeJacRed({h: match_for(h, payload, "movie", f"magnet:?xt=urn:btih:{h}&dn=ThePrestige")})
+        c = cfg(jr, kr, jacred=True)
         assert run(c, client, jac) == 0
+        assert client.ffprobe_calls == []
         nfo = next((jr / "movie" / "4K").rglob("*.nfo"))
         text = nfo.read_text(encoding="utf-8")
         assert nfo_format_version(text) == 3
@@ -570,7 +573,12 @@ def test_kodi_groups_identified_series_by_id_and_keeps_releases_separate():
                      paths=["Release/episode1.mkv"], data={"seriesTmdbId": 777, "seriesTitle": "Canonical Series", "seriesYear": 2024})
         p720, p1080 = probe(1280, 720), probe(1920, 1080)
         client = FakeClient([t1, t2], probes={(h1, 1): p720, (h2, 1): p1080})
-        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        jac = FakeJacRed({
+            h1: match_for(h1, p720, "tv", f"magnet:?xt=urn:btih:{h1}&dn=SeriesA"),
+            h2: match_for(h2, p1080, "tv", f"magnet:?xt=urn:btih:{h2}&dn=SeriesB"),
+        })
+        assert run(cfg(jr, kr, jacred=True), client, jac) == 0
+        assert client.ffprobe_calls == []
         strms = list((kr / "tv" / "1080p" / "Canonical Series (2024)").rglob("*.strm"))
         assert len(strms) == 2
         assert len({p.name for p in strms}) == 2
@@ -579,6 +587,7 @@ def test_kodi_groups_identified_series_by_id_and_keeps_releases_separate():
         tvshow_nfo = kr / "tv" / "1080p" / "Canonical Series (2024)" / "tvshow.nfo"
         assert tvshow_nfo.is_file()
         assert "<width>1280</width>" in tvshow_nfo.read_text(encoding="utf-8")
+        assert client.ffprobe_calls == []
         assert_no_display_title_fields(tvshow_nfo.read_text(encoding="utf-8"))
         assert not list(kr.rglob("Different.Release.Name*"))
         assert not list(kr.rglob("Other.Release.Name*"))
@@ -630,9 +639,10 @@ def test_structured_quality_precedes_release_title_when_ffprobe_unavailable():
         t = torrent(h=h, title="Film.2160p.HDR", category="movie", data={"quality": "720p"})
         client = FakeClient([t], probes={})
         assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
-        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
+        kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
         assert "720p" in kodi_strm.name
         assert "2160p" not in kodi_strm.name
+        assert client.ffprobe_calls == []
         assert "HDR" not in kodi_strm.name
 
 
@@ -649,7 +659,7 @@ def test_unknown_quality_uses_1080p_root_without_quality_suffix():
         assert "[ffffffff]" in kodi_strm.name
 
 
-def test_per_file_nfo_details_are_not_replaced_with_primary_quality_stream():
+def test_no_episode_ffprobe_calls_without_existing_per_file_probe_data():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr, kr = base / "jelly", base / "kodi"
@@ -661,14 +671,19 @@ def test_per_file_nfo_details_are_not_replaced_with_primary_quality_stream():
         )
         primary, secondary = probe(3840, 2160), probe(1280, 720)
         client = FakeClient([t], probes={(h, 1): primary, (h, 2): secondary})
-        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        jac = FakeJacRed({h: match_for(h, primary, "tv", f"magnet:?xt=urn:btih:{h}&dn=SeasonPack")})
+        assert run(cfg(jr, kr, jacred=True), client, jac) == 0
+        assert client.ffprobe_calls == []
         kodi_files = {p.name: p for p in (kr / "tv" / "4K" / "Season Pack" / "Season 01").rglob("*.nfo")}
         assert len(kodi_files) == 2
+        first = next(path for name, path in kodi_files.items() if "S01E01" in name)
+        first_text = first.read_text(encoding="utf-8")
+        assert "<width>3840</width>" in first_text
         second = next(path for name, path in kodi_files.items() if "S01E02" in name)
-        text = second.read_text(encoding="utf-8")
-        assert "<width>1280</width>" in text
-        assert "<height>720</height>" in text
-        assert_no_display_title_fields(text)
+        second_text = second.read_text(encoding="utf-8")
+        assert "<fileinfo>" not in second_text
+        assert_no_display_title_fields(first_text)
+        assert_no_display_title_fields(second_text)
 
 
 def test_known_series_files_without_episode_coordinates_do_not_get_duplicate_file_suffix():
@@ -775,3 +790,26 @@ def test_kodi_short_hash_is_extended_only_when_first_eight_characters_collide():
         assert len(names) == 2
         assert any("[12345678a]" in name for name in names)
         assert any("[12345678b]" in name for name in names)
+
+
+def test_4k_root_requires_positive_evidence_from_any_available_source():
+    from torr2strm import quality_labels_from_metadata
+
+    labels = quality_labels_from_metadata({"quality": "720p", "resolution": "2160p HDR"})
+    assert labels == ["720p", "2160p HDR"]
+    assert any(quality_root_from_label(label) == "4K" for label in labels)
+    assert quality_root_from_label("720p") == "1080p"
+    assert quality_root_from_label(None) == "1080p"
+
+
+def test_fake_probe_payloads_are_ignored_unless_already_attached_to_release():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "7" * 40
+        t = torrent(h=h, title="Movie without resolution", category="movie", data={})
+        client = FakeClient([t], probes={(h, 1): probe(3840, 2160)})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        assert client.ffprobe_calls == []
+        assert list((jr / "movie" / "1080p").rglob("*.strm"))
+        assert not list((jr / "movie" / "4K").rglob("*.strm"))
