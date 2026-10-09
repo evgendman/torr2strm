@@ -319,44 +319,49 @@ def quality_label_from_probe(payload: Any) -> str | None:
 
 
 def quality_label_from_text(value: Any) -> str | None:
-    """Parse only explicit resolution/interlace/HDR markers; source and codec names alone are insufficient."""
+    """Parse explicit resolution/interlace/HDR markers; source/codec names alone are insufficient."""
     text = html.unescape(str(value or "")).lower()
     if not text.strip():
         return None
+
+    label: str | None = None
     dimensions = re.search(r"(?<!\d)(\d{3,5})\s*[x×]\s*(\d{3,5})(?!\d)", text)
     if dimensions:
         try:
-            return quality_label_from_dimensions(int(dimensions.group(1)), int(dimensions.group(2)))
+            label = quality_label_from_dimensions(int(dimensions.group(1)), int(dimensions.group(2)))
         except (TypeError, ValueError):
-            pass
-    if re.search(r"(?<![a-z0-9])(?:8k|4320p)(?![a-z0-9])", text):
-        label = "4320p"
-    elif re.search(r"(?<![a-z0-9])(?:4k|uhd|2160p|2160i)(?![a-z0-9])", text):
-        label = "2160p"
-    elif re.search(r"(?<![a-z0-9])(?:1440p|2k)(?![a-z0-9])", text):
-        label = "1440p"
-    elif re.search(r"(?<![a-z0-9])1080i(?![a-z0-9])", text):
-        label = "1080i"
-    elif re.search(r"(?<![a-z0-9])1080p(?![a-z0-9])", text):
-        label = "1080p"
-    elif re.search(r"(?<![a-z0-9])720p(?![a-z0-9])", text):
-        label = "720p"
-    elif re.search(r"(?<![a-z0-9])(?:576p|576i)(?![a-z0-9])", text):
-        label = "576p"
-    elif re.search(r"(?<![a-z0-9])(?:480p|480i)(?![a-z0-9])", text):
-        label = "480p"
-    elif re.search(r"(?<![a-z0-9])360p(?![a-z0-9])", text):
-        label = "360p"
-    elif re.search(r"(?<![a-z0-9])240p(?![a-z0-9])", text):
-        label = "240p"
-    else:
+            label = None
+
+    if label is None:
+        if re.search(r"(?<![a-z0-9])(?:8k|4320p)(?![a-z0-9])", text):
+            label = "4320p"
+        elif re.search(r"(?<![a-z0-9])(?:4k|uhd|2160p|2160i)(?![a-z0-9])", text):
+            label = "2160p"
+        elif re.search(r"(?<![a-z0-9])(?:1440p|2k)(?![a-z0-9])", text):
+            label = "1440p"
+        elif re.search(r"(?<![a-z0-9])1080i(?![a-z0-9])", text):
+            label = "1080i"
+        elif re.search(r"(?<![a-z0-9])1080p(?![a-z0-9])", text):
+            label = "1080p"
+        elif re.search(r"(?<![a-z0-9])720p(?![a-z0-9])", text):
+            label = "720p"
+        elif re.search(r"(?<![a-z0-9])(?:576p|576i)(?![a-z0-9])", text):
+            label = "576p"
+        elif re.search(r"(?<![a-z0-9])(?:480p|480i)(?![a-z0-9])", text):
+            label = "480p"
+        elif re.search(r"(?<![a-z0-9])360p(?![a-z0-9])", text):
+            label = "360p"
+        elif re.search(r"(?<![a-z0-9])240p(?![a-z0-9])", text):
+            label = "240p"
+
+    if label is None:
         return None
 
     is_dv = bool(re.search(r"\b(?:dolby[ ._-]?vision|dovi|dv)\b", text))
     is_hdr = bool(re.search(r"\b(?:hdr(?:10(?:\+|plus)?)?|hlg)\b", text))
-    if is_dv:
-        label += " DV"
-    elif is_hdr:
+    if is_dv and not label.endswith(" DV"):
+        label = re.sub(r"\s+(?:HDR|DV)$", "", label) + " DV"
+    elif is_hdr and not label.endswith((" HDR", " DV")):
         label += " HDR"
     return label
 
@@ -2247,7 +2252,11 @@ class OutputRunner:
         if snap.category == "movie":
             # Preserve the existing Elementum movie model: one torrent-level link,
             # using the primary video's file-specific NFO data.
-            base = self.kodi_display_title_by_hash.get(snap.hash) or nfo_movie_title(snap)
+            if identity:
+                base = self.kodi_display_title_by_hash.get(snap.hash) or nfo_movie_title(snap)
+            else:
+                base, display_year_value, _ = explicit_display_title(snap, tv=False)
+                base = clean_media_component(base, display_year_value)
             short = self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])
             leaf = bounded_kodi_leaf(base, snap.quality_label, short)
             targets.append((primary, torrent_dir, self._elementum_url(snap), leaf, False))
