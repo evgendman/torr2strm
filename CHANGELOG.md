@@ -10,7 +10,7 @@
 
 ## 1.4.3
 
-- Replaced the Prowlarr Search Feed (`/api/v1/search`) with JacRed's public native Torznab XML endpoint (`/torznab/api`); torr2strm no longer needs a local Prowlarr instance or its indexer ID.
+- Replaced the Prowlarr Search Feed (`/api/v1/search`) with JacRed's public native v2 JSON endpoint (`/api/v2.0/indexers/all/results`); torr2strm no longer needs a local Prowlarr instance or its indexer ID.
 - Parses Torznab RSS items and extended attributes, including `infohash`, magnet URL, category and year.
 - Sends standard Torznab `t`, `q`, `limit`, `extended` and optional `apikey` query parameters.
 - Fixed exact-hash matching to check every candidate independently so an unrelated GUID/hash cannot mask a matching BTIH.
