@@ -117,16 +117,16 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Keep exactly `4K` and `1080p` as output quality roots.
 - Resolve quality once per torrent from the primary eligible video file; preserve the existing primary-file selection rule (largest eligible video file, path tie-breaker).
 - Preserve the current valid-NFO cache reuse for ffprobe-derived data, then use primary-file ffprobe results from an exact JacRed match or TorrServer as applicable.
-- If usable primary-file ffprobe data cannot be obtained, consult the structured quality field from the same torrent/exact-hash enrichment, then explicit markers in the release title, then treat quality as unknown.
+- Collect all available evidence from cached NFO/release ffprobe data, structured quality fields, and explicit release-title markers. Set the root to `4K` if any source proves 4K; otherwise `1080p`.
 - Implement separate `quality_root` and `quality_label` values, using the same resolved result for paths and Kodi STRM basenames.
-- Never probe every episode solely to classify its quality. Retain existing per-file ffprobe calls when needed to produce each file's own NFO stream details.
+- Never probe media. Keep streamdetails only from pre-existing payloads or cached NFOs; otherwise generate identity-only NFO.
 - Normalize known resolution and HDR/Dolby Vision labels as specified above. Unknown quality goes to `1080p` with no quality suffix.
 
 **Exit criteria**
 
-- A torrent whose primary stream is 720p can reside under `1080p` and show `720p` in every relevant Kodi release link name.
+- A `720p` label can remain on an item even when a different source proves 4K and moves its root to `4K`; root and label remain independent.
 - An identifiable 4K torrent uses the `4K` root and a truthful label such as `2160p` (plus HDR/DV only when known).
-- Missing/unusable ffprobe data follows the structured-field → release-title → unknown fallback; unknown does not become a false `1080p` label.
+- A missing quality label defaults only the root to `1080p`; no quality suffix is fabricated. Any positive 4K claim in any available source selects the `4K` root even if another source reports a lower label.
 - Per-file NFO stream details remain tied to the file represented by that NFO.
 
 ### Phase 2 — Implement the agreed NFO contract
@@ -138,7 +138,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - `tvshow.nfo`: trusted series IDs + Combination NFO scraper URL + streamdetails from the deterministic representative release in that quality root; no human-readable title.
 - Episode NFO: ordinary episode XML; trusted IDs, known season/episode coordinates, and that source file's own ffprobe `fileinfo/streamdetails`; no Combination NFO URL.
 - Preserve Kodi Combination NFO URL placement/format supported by the current NFO implementation, updating the format version if the new contract requires it.
-- Do not remove the per-file ffprobe work needed to produce accurate NFOs. The primary video's payload decides torrent quality; each file's own payload describes that file.
+- Do not issue per-file ffprobe requests. Use technical data already present for a matching source file; NFOs without such data remain identity-only.
 - Add fixtures/assertions proving that title-like fields are omitted and provider IDs/scraper URLs/stream details are kept in the correct NFO types.
 
 **Exit criteria**
@@ -216,7 +216,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 
 - Add regression fixtures for current Jellyfin paths and Kodi playback behavior before changing path generation.
 - Test quality-root versus quality-label with 480p/720p/1080p/1080i/1440p/2160p and HDR/DV examples.
-- Test the fallback ladder: primary ffprobe/cache → structured quality field → release-title markers → unknown; include explicit assertion that unknown uses the `1080p` root and has no quality suffix.
+- Test no `/ffp/` requests, root evidence accumulation across all available sources, label priority, structured-quality/title fallback, and unknown quality (`1080p` root without a quality suffix).
 - Verify that quality is determined from the primary torrent video, while other playable files retain their own per-file stream details in their NFOs and do not change the torrent label.
 - Test two or more releases for one episode, multiple episodes in one release, a rare duplicate logical episode within one torrent, and short-hash collision extension.
 - Test grouping of one series ID across releases with different torrent titles/internal file trees and different series IDs with the same human-readable name/year.
@@ -257,9 +257,9 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Do not redesign Jellyfin's existing path/grouping behavior as part of Kodi normalization.
 - Do not add more quality-root categories: only `4K` and `1080p` exist.
 - Do not infer a release's resolution from codec or source tokens alone.
-- Do not probe every episode solely for quality classification; retain per-file probes only as required for truthful per-file NFO stream details.
+- Do not issue any new ffprobe request. Use pre-existing ffprobe payloads/cache only; if unavailable, write identity-only NFOs.
 - Do not merge releases using approximate title similarity or invent missing provider IDs/season/episode numbers.
-- Do not run/install local ffprobe from torr2strm; ffprobe requests continue through TorrServer.
+- Do not run/install local ffprobe from torr2strm and do not call TorrServer `/ffp/`; only already-present release/NFO payloads may be used.
 - Do not make Kodi output authoritative for deletion and do not implement/use `action=drop`.
 - Do not include `hotcached` work in this roadmap.
 
