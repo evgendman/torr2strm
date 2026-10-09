@@ -2052,10 +2052,11 @@ class OutputRunner:
     def _tvshow_nfo_content(self, snap: TorrentSnapshot, logical_identity: str | None = None) -> str:
         import xml.etree.ElementTree as ET
         root = ET.Element("tvshow")
-        ids = provider_ids_for_snapshot(snap)
-        if logical_identity and ":" in logical_identity:
-            kind, value = logical_identity.split(":", 1)
-            ids = {kind: value}
+        ids = (
+            self.kodi_series_canonical_ids.get(logical_identity, provider_ids_for_snapshot(snap))
+            if logical_identity
+            else provider_ids_for_snapshot(snap)
+        )
         default_type = "tmdb" if "tmdb" in ids else "imdb" if "imdb" in ids else "tvdb" if "tvdb" in ids else next(iter(ids), None)
         for kind, value in ids.items():
             if kind in {"tmdb", "imdb", "tvdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"}:
@@ -2132,8 +2133,8 @@ class OutputRunner:
             # the canonical logical provider ID selected for this series rather
             # than whichever episode torrent happens to sync last.
             if category == "tv":
-                kind, value = identity.split(":", 1)
-                self.kodi_series_canonical_ids[identity] = {kind: value}
+                canonical_hash = grouped[key][0][3]
+                self.kodi_series_canonical_ids[identity] = provider_ids_for_snapshot(snapshots[canonical_hash])
 
         # Add a short hash to an unidentified release directory only if another
         # current torrent would otherwise claim the same directory.
