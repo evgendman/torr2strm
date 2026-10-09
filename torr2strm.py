@@ -2071,12 +2071,18 @@ class OutputRunner:
             combination_url=combination_url,
         )
 
-    def _tvshow_nfo_content(self, snap: TorrentSnapshot, logical_identity: str | None = None) -> str:
+    def _tvshow_nfo_content(
+        self,
+        snap: TorrentSnapshot,
+        logical_identity: str | None = None,
+        streamdetails_nfo: str | None = None,
+    ) -> str:
         import xml.etree.ElementTree as ET
         root = ET.Element("tvshow")
+        group_key = (snap.category, snap.quality or "1080p", logical_identity) if logical_identity else None
         ids = (
-            self.kodi_series_canonical_ids.get(logical_identity, provider_ids_for_snapshot(snap))
-            if logical_identity
+            self.kodi_series_canonical_ids.get(group_key, provider_ids_for_snapshot(snap))
+            if group_key
             else provider_ids_for_snapshot(snap)
         )
         default_type = "tmdb" if "tmdb" in ids else "imdb" if "imdb" in ids else "tvdb" if "tvdb" in ids else next(iter(ids), None)
@@ -2089,6 +2095,14 @@ class OutputRunner:
                     attrs["default"] = "true"
                 node = ET.SubElement(root, "uniqueid", attrs)
                 node.text = value
+        if streamdetails_nfo:
+            try:
+                stream_root = _nfo_xml_and_urls(streamdetails_nfo)[0]
+                fileinfo = stream_root.find("./fileinfo")
+                if fileinfo is not None:
+                    root.append(ET.fromstring(ET.tostring(fileinfo, encoding="unicode")))
+            except Exception as exc:
+                LOG.warning("TVSHOW_STREAMDETAILS_SKIP hash=%s error=%s", snap.hash, exc)
         return _finalize_nfo(
             root,
             source_comment="kind=tvshow",
@@ -2100,7 +2114,8 @@ class OutputRunner:
         self.kodi_dirname_by_hash: dict[str, str] = {}
         self.kodi_display_title_by_hash: dict[str, str] = {}
         self.kodi_identity_by_hash: dict[str, str | None] = {}
-        self.kodi_series_canonical_ids: dict[str, dict[str, str]] = {}
+        self.kodi_series_canonical_ids: dict[tuple[str, str, str], dict[str, str]] = {}
+        self.kodi_series_canonical_hash_by_identity: dict[tuple[str, str, str], str] = {}
         self.kodi_hash_by_torrent = {h: h[:8] for h in snapshots}
         by_prefix: dict[str, list[str]] = {}
         for h in snapshots:
@@ -2156,7 +2171,8 @@ class OutputRunner:
             # than whichever episode torrent happens to sync last.
             if category == "tv":
                 canonical_hash = grouped[key][0][3]
-                self.kodi_series_canonical_ids[identity] = provider_ids_for_snapshot(snapshots[canonical_hash])
+                self.kodi_series_canonical_ids[key] = provider_ids_for_snapshot(snapshots[canonical_hash])
+                self.kodi_series_canonical_hash_by_identity[key] = canonical_hash
 
         # Add a short hash to an unidentified release directory only if another
         # current torrent would otherwise claim the same directory.
