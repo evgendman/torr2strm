@@ -2424,6 +2424,7 @@ class OutputRunner:
 
         self._mkdir(torrent_dir)
         desired: dict[str, dict[str, Any]] = {}
+        nfo_contents_by_file_id: dict[int, str] = {}
         desired_dirs: set[str] = {rel_torrent_dir}
         seen_destinations: set[str] = set()
         video_files = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
@@ -2486,6 +2487,7 @@ class OutputRunner:
                 # than dropping the STRM; the quality fallback has already run.
                 nfo_content = self._nfo_content(snap, file, None, "unavailable")
 
+            nfo_contents_by_file_id[file.file_id] = nfo_content
             self._write_nfo(nfo_path, nfo_content, snap.hash, file.path, rel_nfo)
             self._write_strm(strm_path, url, snap.hash, file.path, rel_strm)
             desired[rel_strm] = {
@@ -2505,7 +2507,10 @@ class OutputRunner:
             tvshow_rel = tvshow_path.relative_to(self.root).as_posix()
             self._write_nfo(
                 tvshow_path,
-                self._tvshow_nfo_content(snap),
+                self._tvshow_nfo_content(
+                    snap,
+                    streamdetails_nfo=nfo_contents_by_file_id.get(primary.file_id),
+                ),
                 snap.hash,
                 snap.title,
                 tvshow_rel,
