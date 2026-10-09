@@ -1507,9 +1507,9 @@ class JacRedClient:
             LOG.warning("JACRED_API_KEY_IGNORED direct JacRed v2 API does not use the configured api_key")
         self.indexer_id = int(cfg.get("indexer_id", 0))  # Legacy Prowlarr-only setting; unused by native Torznab.
         if self.indexer_id > 0:
-            LOG.warning("JACRED_INDEXER_ID_IGNORED value=%s; direct public JacRed Torznab searches all trackers", self.indexer_id)
+            LOG.warning("JACRED_INDEXER_ID_IGNORED value=%s; direct public JacRed v2 JSON searches all trackers", self.indexer_id)
         self.limit = int(cfg.get("limit", 1000))
-        self.timeout_sec = float(cfg.get("timeout_sec", 10))
+        self.timeout_sec = float(cfg.get("timeout_sec", 30))
         self.retries = int(cfg.get("retries", 0))
         self._cache: dict[tuple[str, str, int, int], list[dict[str, Any]]] = {}
         self._last_upstream_finished = 0.0
@@ -3099,7 +3099,7 @@ def main() -> int:
     group.add_argument("--jacred", metavar="URL", help="override configured JacRed base URL for this run")
     group.add_argument("--no-jacred", action="store_true", help="disable JacRed for this run")
     parser.add_argument("--jacred-api-key", metavar="KEY", help="override configured JacRed API key")
-    parser.add_argument("--jacred-indexer-id", type=int, help="deprecated legacy option; ignored by direct public JacRed Torznab API")
+    parser.add_argument("--jacred-indexer-id", type=int, help="deprecated legacy option; ignored by direct public JacRed v2 JSON API")
     parser.add_argument("--jacred-limit", type=int, help="override JacRed result limit")
     try:
         args = parser.parse_args()
