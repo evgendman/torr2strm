@@ -1,4 +1,4 @@
-# torr2strm v1.4.1
+# torr2strm v1.4.2
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -109,7 +109,7 @@ Only data that is already available is considered:
 3. Explicit structured quality/resolution fields in TorrServer metadata or an exact-hash JacRed result.
 4. Explicit resolution/interlace/HDR/Dolby Vision markers in the release title.
 
-A metadata field or release title cannot establish quality from source/codec words alone: `WEB-DL`, `BluRay`, `HEVC` and `HD` are not proof of a particular resolution. An exact JacRed hash match is required before its ffprobe or quality fields may be used.
+A metadata field or release title cannot establish quality from source/codec words alone: `WEB-DL`, `BluRay`, `HEVC` and `HD` are not proof of a particular resolution. An exact JacRed hash match is required before its ffprobe or quality fields may be used. The matcher checks valid `infoHash`/hash fields and BTIH extracted from magnet links independently; a result-page URL in `guid` must not mask a valid magnet hash.
 
 #### Quality root and display label are separate
 
