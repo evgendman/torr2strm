@@ -11,7 +11,7 @@ Example shipped with the repository: [`etc/config.toml.example`](../etc/config.t
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `url` | required by configuration loader; example `http://127.0.0.1:8097` | Base URL of TorrServer, without `/torrents`, `/playlist` or `/ffp/...`. Must begin with `http://` or `https://`. |
+| `url` | required by configuration loader; example `http://127.0.0.1:8097` | Base URL of TorrServer, without `/torrents` or `/playlist`. Must begin with `http://` or `https://`. |
 | `timeout_sec` | `20` | General TorrServer request timeout in seconds. |
 | `remove_timeout_sec` | `60` | Timeout budget for source-torrent removal and its confirmation. |
 | `metadata_wait_sec` | `10` | Maximum time allowed to wait for torrent metadata/FileStats to become available. |
@@ -36,16 +36,19 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 | Parameter | Default | Meaning |
 |---|---|---|
 | `tv_unmatched_season` | `0` | Season number used when a TV file's season cannot be inferred from its path/title. `0` corresponds to Specials-style season semantics. |
-| `video_extensions` | See `etc/config.toml.example` | List of file extensions eligible for video STRM and per-file media-info processing. Extensions may be written with or without the leading dot. Audio, subtitle and image files do not get their own video STRM. |
+| `video_extensions` | See `etc/config.toml.example` | List of file extensions eligible for video STRM generation and cached-NFO lookup. Extensions may be written with or without the leading dot. Audio, subtitle and image files do not get their own video STRM. |
 
-### `[quality]`
+### Legacy \`[quality]\` settings
 
-| Parameter | Default | Meaning |
-|---|---:|---|
-| `timeout_sec` | `12` | Timeout in seconds for a TorrServer `/ffp/{hash}/{file_id}` request. |
-| `retries` | `0` | Additional attempts after a failed/unusable TorrServer ffprobe response. `0` means one attempt total, without retries. Must be non-negative. |
+In v1.4.1, \`[quality].timeout_sec\` and \`[quality].retries\` are no longer used. Existing config files may retain these keys, but they are ignored. torr2strm does not call TorrServer \`/ffp/{hash}/{file_id}\`, does not execute a local ffprobe, and does not require ffprobe to be installed on TorrServer.
 
-Quality root is based on the primary eligible video file (largest eligible video by size, then path). The root is `4K` when `max(width, height) >= 3840`, otherwise `1080p`. The display label is resolved independently: usable ffprobe data (including cached stream details for that exact file), then a structured quality field from TorrServer/exact-hash JacRed, then explicit resolution/HDR/DV markers in the release title, then unknown. Unknown quality uses the `1080p` root but does not add a quality suffix to the Kodi basename. Other video files may still be probed to keep their own NFO stream details correct.
+Quality decision rules:
+
+- Read only already-existing ffprobe payloads or valid cached NFO details, if any.
+- Then read structured resolution/quality fields from TorrServer metadata and exact-hash JacRed results.
+- Then inspect explicit resolution/HDR/Dolby Vision markers in the release title.
+- Use the best-priority available label for the STRM name, but put the torrent under \`4K\` if **any available source** provides affirmative 4K evidence. If none does, use \`1080p\`.
+- If no usable resolution label is available, the root is \`1080p\` and no quality suffix is written to the basename.
 
 ### `[jacred]`
 
@@ -87,17 +90,9 @@ python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-ru
 
 `--jacred` and `--no-jacred` are mutually exclusive. CLI overrides are in-memory only and are not persisted to the TOML file.
 
-## ffprobe prerequisite on TorrServer
+## ffprobe is optional
 
-`torr2strm` does **not** run or install the `ffprobe` executable itself. It requests stream JSON from TorrServer using `GET /ffp/{hash}/{file_id}`. The TorrServer instance therefore must have a working ffprobe binary and expose the `/ffp/...` endpoint to the torr2strm process.
-
-Check the endpoint documented by TorrServer for ffprobe availability:
-
-```bash
-curl -i http://127.0.0.1:8097/ffp/status
-```
-
-Replace the address and port with the actual `[torrserver].url`. The current torr2strm client has no TorrServer username/password options; if the API is protected by HTTP Basic Auth, arrange access in the deployment so the endpoints can be reached by torr2strm without unsupported client-side credentials.
+v1.4.1 does not make any `/ffp/` requests. The TorrServer ffprobe executable and `/ffp/status` endpoint are not prerequisites for torr2strm. Technical stream details are carried into NFO only when they already exist in a matching release payload or a valid cached NFO; otherwise, the NFO contains identity data only.
 
 ## Minimal example
 
@@ -121,9 +116,7 @@ root = "/mnt/torr2strm-media-kodi"
 manifest = ".torr2strm/manifest.json"
 enabled = true
 
-[quality]
-timeout_sec = 12
-retries = 0
+# Legacy [quality] timeout/retries keys are intentionally omitted in v1.4.1.
 
 [jacred]
 url = "https://jac.red"
