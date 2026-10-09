@@ -45,7 +45,7 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 | `timeout_sec` | `12` | Timeout in seconds for a TorrServer `/ffp/{hash}/{file_id}` request. |
 | `retries` | `0` | Additional attempts after a failed/unusable TorrServer ffprobe response. `0` means one attempt total, without retries. Must be non-negative. |
 
-Quality is not inferred from a release title. After a usable cached NFO or usable exact JacRed ffprobe payload is unavailable, torr2strm requests real stream data from TorrServer. The primary eligible video's maximum dimension determines the label: `>= 2160` pixels is `4K`; anything below is `1080p`.
+Quality root is based on the primary eligible video file (largest eligible video by size, then path). The root is `4K` when `max(width, height) >= 2160`, otherwise `1080p`. The display label is resolved independently: usable ffprobe data (including cached stream details for that exact file), then a structured quality field from TorrServer/exact-hash JacRed, then explicit resolution/HDR/DV markers in the release title, then unknown. Unknown quality uses the `1080p` root but does not add a quality suffix to the Kodi basename. Other video files may still be probed to keep their own NFO stream details correct.
 
 ### `[jacred]`
 
