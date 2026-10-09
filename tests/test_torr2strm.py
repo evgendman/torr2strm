@@ -459,7 +459,7 @@ def test_nfo_format_v3_and_combination_tmdb_url_are_generated():
         assert MediaInfoResolver._nfo_is_usable(nfo)
 
 
-def test_legacy_nfo_v1_migrates_without_losing_metadata_and_gets_tmdb_url():
+def test_legacy_nfo_is_rewritten_to_allowed_fields_and_gets_tmdb_url():
     legacy = """<?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <movie>
   <title>The Prestige</title>
@@ -473,8 +473,10 @@ def test_legacy_nfo_v1_migrates_without_losing_metadata_and_gets_tmdb_url():
     migrated, changed = migrate_nfo_v1_to_v2(legacy)
     assert changed
     assert nfo_format_version(migrated) == 3
-    assert "<tag>USER_NOTE</tag>" in migrated
+    assert "<tag>USER_NOTE</tag>" not in migrated
     assert "<title>" not in migrated
+    assert "<year>" not in migrated
+    assert "<fileinfo><streamdetails><video>" in migrated
     assert '<torr2strm formatversion="3"' in migrated
     assert migrated.rstrip().endswith("https://www.themoviedb.org/movie/1124")
 
@@ -595,3 +597,52 @@ def test_kodi_shared_series_directory_cleanup_preserves_other_release():
         assert len(remaining) == 1
         assert "[55555555]" in remaining[0].name
         assert (kr / "tv" / "1080p" / "Shared Show (2020)" / "tvshow.nfo").is_file()
+
+
+def test_structured_quality_precedes_release_title_when_ffprobe_unavailable():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "e" * 40
+        t = torrent(h=h, title="Film.2160p.HDR", category="movie", data={"quality": "720p"})
+        client = FakeClient([t], probes={})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
+        assert "720p" in kodi_strm.name
+        assert "2160p" not in kodi_strm.name
+        assert "HDR" not in kodi_strm.name
+
+
+def test_unknown_quality_uses_1080p_root_without_quality_suffix():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "f" * 40
+        t = torrent(h=h, title="Unclassified Movie Release", category="movie", data={})
+        client = FakeClient([t], probes={})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
+        assert " — " not in kodi_strm.name
+        assert "[ffffffff]" in kodi_strm.name
+
+
+def test_per_file_nfo_details_are_not_replaced_with_primary_quality_stream():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "a" * 40
+        t = torrent(
+            h=h, title="Season Pack S01", category="tv",
+            paths=["Episode.S01E01.mkv", "Episode.S01E02.mkv"],
+            lengths=[1000, 900], data={"seriesTmdbId": 42, "seriesTitle": "Season Pack"},
+        )
+        primary, secondary = probe(3840, 2160), probe(1280, 720)
+        client = FakeClient([t], probes={(h, 1): primary, (h, 2): secondary})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        kodi_files = {p.name: p for p in (kr / "tv" / "4K" / "Season Pack").rglob("*.nfo")}
+        assert len(kodi_files) == 2
+        second = next(path for name, path in kodi_files.items() if "S01E02" in name)
+        text = second.read_text(encoding="utf-8")
+        assert "<width>1280</width>" in text
+        assert "<height>720</height>" in text
+        assert "<title>" not in text
