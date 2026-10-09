@@ -12,6 +12,7 @@ from torr2strm import (
     OutputSpec,
     SyncCoordinator,
     bounded_strm_leaf,
+    bounded_kodi_leaf,
     category_from_jacred_result,
     extract_btih,
     media_quality,
@@ -688,3 +689,16 @@ def test_duplicate_episode_in_same_torrent_gets_original_file_ordinal_only_for_c
         assert len(names) == 3
         assert sum("[file" in name for name in names) == 2
         assert any("S01E02" in name and "[file" not in name for name in names)
+
+
+def test_bounded_kodi_leaf_preserves_quality_and_hash_when_title_is_too_long():
+    from torr2strm import bounded_kodi_leaf
+
+    leaf = bounded_kodi_leaf("ОченьДлинноеНазвание" * 30, "720p HDR", "a1b2c3d4")
+    assert len((leaf + ".strm").encode("utf-8")) <= 255
+    assert len((leaf + ".nfo").encode("utf-8")) <= 255
+    assert leaf.endswith(" — 720p HDR [a1b2c3d4]")
+
+    duplicate = bounded_kodi_leaf("ОченьДлинноеНазвание" * 30, "720p", "a1b2c3d4", file_ordinal=3)
+    assert len((duplicate + ".strm").encode("utf-8")) <= 255
+    assert duplicate.endswith(" — 720p [a1b2c3d4] [file03]")
