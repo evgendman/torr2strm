@@ -188,6 +188,8 @@ def test_extract_btih_accepts_magnet():
 def test_quality_root_and_display_label_are_separate_and_quality_fallback_is_explicit():
     assert media_quality(probe(1920, 1080)) == "1080p"
     assert media_quality(probe(3840, 1600)) == "4K"
+    assert media_quality(probe(2560, 1440)) == "1080p"
+    assert quality_label_from_probe(probe(2560, 1440)) == "1440p"
     assert quality_label_from_probe(probe(1280, 720)) == "720p"
     assert quality_label_from_probe(probe(3840, 2160, hdr="dv")) == "2160p DV"
     assert quality_label_from_text("Release.WEB-DL.1080p.HDR") == "1080p HDR"
