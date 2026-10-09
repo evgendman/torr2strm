@@ -1,4 +1,4 @@
-# torr2strm v1.3.2
+# torr2strm v1.4.0
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -74,7 +74,9 @@ Important details:
 - A non-empty TorrServer category other than `movie` or `tv` is treated as unknown and remains `_uncategorized`. Because the source field was non-empty, JacRed does not override it.
 - The program never guesses movie versus TV from title text.
 
-The second directory level is determined independently from category: `4K` when the primary eligible video stream has a maximum dimension of at least 2160 pixels; otherwise `1080p`. A usable cached NFO may supply this previously resolved quality.
+The second directory level is a fixed two-way split: `4K` when the primary eligible video stream has a maximum dimension of at least 2160 pixels; otherwise `1080p`. This is the torrent-level quality root and does not claim that every file is 1080p.
+
+Kodi's normalized tree is separate from Jellyfin's existing tree. Identified releases of one movie/series share a canonical logical directory under each quality root. Identified TV episodes are placed under `Season NN`; unidentified series keep the torrent release-title directory and original internal file hierarchy. Unknown IDs are never fabricated and title similarity alone never merges torrents.
 
 ## JacRed and media information
 
@@ -122,16 +124,16 @@ exact JacRed hash match with a usable ffprobe payload
 TorrServer GET /ffp/{hash}/{file_id}
 ```
 
-A JacRed result is not accepted as technical media information unless its payload contains a usable video stream. `quality`, `videotype`, voice labels and title tokens are not substitutes for ffprobe dimensions. The selected primary eligible video stream determines the torrent's quality directory; the other playable files still receive per-file media data as required by the output trees.
+The primary eligible video file (largest playable video by size, with path as a stable tie-breaker) determines one quality root and one quality label for the entire torrent. Do not probe every episode merely to classify quality; the existing per-file probe work is retained when needed to place accurate stream details in each file's NFO.
 
-Quality rule:
+Quality-resolution priority:
 
-```text
-max(width, height) >= 2160 -> 4K
-otherwise                  -> 1080p
-```
+1. Real ffprobe data for the primary video file, including a valid cached NFO for that exact source file.
+2. An explicit structured quality/resolution field from TorrServer metadata or an exact-hash JacRed result.
+3. Explicit resolution/interlace/HDR/Dolby Vision markers in the torrent release title.
+4. Unknown quality.
 
-No title-based `1080p`/`2160p` fallback exists.
+The root is always either `4K` (primary dimensions with max(width, height) >= 2160) or `1080p` (everything else, including unknown quality). The display label is independent: for example, a 720p torrent is stored under the `1080p` root but its Kodi item name says `720p`. If quality is unknown, the root is `1080p` and the name has no quality suffix. Codec/source tokens such as `WEB-DL`, `BluRay`, `HEVC` or `HD` alone are not treated as a resolution.
 
 ## Magnet handling for Kodi
 
@@ -147,60 +149,23 @@ For TV the `oindex` value is the zero-based original FileStats order, not the on
 
 ## NFO responsibility boundary
 
-`torr2strm` does not try to become a movie/TV metadata scraper. NFO contains only data that the importer can know reliably plus the real media-info payload.
+NFOs contain only reliable identifiers and technical stream data. They deliberately do not contain human-readable display names: Kodi was observed to replace its localized scraper title with the NFO title after scraping, and Jellyfin should retrieve localized names from provider IDs.
 
-```text
-NFO
-├── identification and base metadata
-│   ├── title
-│   ├── originaltitle
-│   ├── sorttitle (when known)
-│   ├── year
-│   ├── premiered / releasedate for known content-level dates
-│   ├── aired for known episode-level dates
-│   ├── season / episode
-│   └── all trustworthy provider IDs available to the importer
-│
-└── technical file data
-    └── fileinfo/streamdetails
-        ├── video
-        │   ├── codec
-        │   ├── bitrate
-        │   ├── dimensions
-        │   ├── aspect/aspectratio
-        │   ├── framerate
-        │   ├── scantype
-        │   ├── bitdepth (when available)
-        │   ├── hdrtype (when available)
-        │   └── stereomode (when available)
-        ├── audio
-        │   ├── codec
-        │   ├── bitrate
-        │   ├── language
-        │   ├── title
-        │   ├── channels
-        │   └── samplingrate
-        └── subtitle
-            ├── codec
-            ├── language
-            └── title/flags
-```
+- **Movie sidecar NFO:** trusted provider IDs, ffprobe stream details for the specific movie media item, and a Kodi Combination NFO scraper URL when a trustworthy TMDb ID is available.
+- **Series-root `tvshow.nfo`:** trusted series IDs and a Combination NFO scraper URL when a trustworthy TMDb ID is available. No title or arbitrary episode stream details.
+- **Episode sidecar NFO:** ordinary `episodedetails` format, trusted IDs, known season/episode coordinates, and ffprobe stream details for the exact source file. No Combination NFO URL.
+- **No NFO type writes** `title`, `originaltitle`, `sorttitle`, `showtitle`, `name`, year/date display metadata, or any other human-facing title field.
+- Per-file ffprobe details remain tied to their own STRM/NFO. The primary file determines torrent-level quality only; it does not replace the episode/file technical details.
 
-TV roots also receive a `tvshow.nfo` with the same known series-level identity/base metadata and provider IDs. Episode NFOs contain the episode identity plus per-file stream details.
+Useful video/audio/subtitle stream fields include codec, bitrate, dimensions, aspect ratio, frame rate, scan type, bit depth, HDR type, stereomode, audio language/channels/sampling rate, and subtitle codec/language/title flags when available.
 
-A valid NFO found in one output can be copied verbatim into the other output. This avoids a second ffprobe when one tree already has a cached NFO.
+A valid reusable NFO may be copied between output trees for the same source file so another ffprobe call can be avoided. Jellyfin may read the stream details but does not necessarily use them as its effective stream information; their retention is still useful to Kodi and other consumers.
 
-### NFO format and migration
+### NFO format and clean rebuild
 
-NFOs have their own format version, independent from the torr2strm software version. Current `NFO_FORMAT_VERSION` is `2`. Legacy/unversioned torr2strm NFOs are treated as format v1 and are automatically migrated to v2 during normal synchronization. Migration does not probe media again.
+NFO format version is independent from the software and manifest versions. Version 3 uses the `<torr2strm formatversion="3" />` marker, title-free metadata, and the Combination NFO URL after the XML root for movie and `tvshow.nfo` files where a TMDb ID is known. Episode NFOs remain ordinary XML without a trailing scraper URL.
 
-Format v2 adds a `<torr2strm formatversion="2" />` marker inside the XML and, when a trustworthy TMDb ID is present, one Kodi Combination NFO URL after the closing XML root:
-
-```text
-https://www.themoviedb.org/movie/<tmdbid>
-```
-
-For TV root `tvshow.nfo`, the URL uses `/tv/<tmdbid>`. Episode NFOs do not get a Combination URL. Only one scraper URL is written; TMDb is preferred when its ID is known. Existing valid metadata and `fileinfo/streamdetails` are retained during migration. Future format migrations can be added as explicit version-to-version steps without cleaning the output trees.
+The output trees are still under development and are intentionally rebuilt cleanly for v1.4.0; no directory-tree migration is performed. The parser still strips title fields if it upgrades an older cached NFO, but operators should follow the clean-reset procedure below instead of relying on legacy NFOs.
 
 ## Reverse deletion
 
@@ -269,8 +234,8 @@ sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred https://jac.red --jac
 
 The service is a systemd oneshot triggered by `torr2strm.timer`.
 
-Recoverable failures for individual torrents are logged in `DONE` as `quality_unresolved`/`failed`, but the process exits `0` so systemd does not mark the oneshot as failed. Fatal configuration/source errors still exit non-zero.
+Recoverable media-information failures no longer prevent the STRM from being materialized if quality can be determined from structured metadata/title, or defaulted to the `1080p` root. An identity-only NFO is written if per-file ffprobe data is unavailable. Fatal configuration/source errors still exit non-zero.
 
 ## Upgrade / clean start
 
-Manifest format is v4. Old v3 state is intentionally rejected. For a clean start, stop the service/timer, clear the contents of both output roots, keep the root directories themselves, install the new version, and run one manual sync.
+Software version is `1.4.0`, manifest format is v5, and NFO format is v3. Manifest v4 and older schemas are intentionally rejected. For the development rollout, do not migrate old trees: stop the timer/service, disable Jellyfin reverse deletion temporarily, clear all contents (including `.torr2strm` state) of the explicitly configured Jellyfin and Kodi roots, install the new program, recreate state and run a manual sync. Never clear any parent directory outside the configured roots. See [ROADMAP.md](ROADMAP.md) for the implemented behavior contract and tests.
