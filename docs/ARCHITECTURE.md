@@ -24,7 +24,7 @@ Jellyfin output (existing paths) + normalized Kodi output
 
 ## JacRed matching and identity
 
-JacRed is optional enrichment, never a substitute for TorrServer's torrent inventory. A candidate is accepted only when its `infoHash`, `guid` or BTIH extracted from its magnet/download URL exactly matches the TorrServer hash. Approximate title similarity alone is not sufficient.
+JacRed is optional enrichment, never a substitute for TorrServer's torrent inventory. The client queries the local Prowlarr REST API, which forwards searches to the configured JacRed Torznab indexer; its URL must be Prowlarr's base URL and its API key must come from Prowlarr, not the public `https://jac.red` endpoint. A candidate is accepted only when a valid `infoHash` or BTIH parsed from its magnet/download URL exactly matches the TorrServer hash. A result-page URL in `guid` is not a hash and must not mask a valid hash elsewhere in the result. Approximate title similarity alone is not sufficient.
 
 Provider IDs are used to establish logical movie/series identity. For Kodi, identified releases with the same logical identity share one readable directory per quality root. Unknown series identity does not cause title-based fuzzy merging: the release title names the directory and the torrent's inner file hierarchy is preserved. Missing IDs, season numbers and episode numbers are never fabricated.
 
