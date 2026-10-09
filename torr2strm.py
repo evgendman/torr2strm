@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.3.2 - TorrServer -> multiple STRM materialized trees.
+"""torr2strm 1.4.0 - TorrServer -> multiple STRM materialized trees.
 
 Key rules:
 - TorrServer is the source of truth.
@@ -38,9 +38,9 @@ import tomllib
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.3.2"
-MANIFEST_VERSION = 4
-NFO_FORMAT_VERSION = 2
+VERSION = "1.4.0"
+MANIFEST_VERSION = 5
+NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
 
 VIDEO_EXTENSIONS = {
@@ -253,6 +253,220 @@ def media_quality(payload: dict[str, Any]) -> str:
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid video dimensions in ffprobe") from exc
     return quality_from_dimensions(width, height)
+
+
+
+
+def quality_label_from_dimensions(width: int, height: int, stream: dict[str, Any] | None = None) -> str | None:
+    """Return a normalized human-facing resolution/HDR label from real stream data."""
+    if width <= 0 or height <= 0:
+        return None
+    maximum = max(width, height)
+    if maximum >= 7680:
+        label = "4320p"
+    elif maximum >= 3840:
+        label = "2160p"
+    elif maximum >= 2560:
+        label = "1440p"
+    elif maximum >= 1920:
+        label = "1080p"
+    elif maximum >= 1280:
+        label = "720p"
+    elif maximum >= 640:
+        label = "480p"
+    elif maximum >= 426:
+        label = "360p"
+    elif maximum >= 240:
+        label = "240p"
+    else:
+        return None
+
+    fields = stream if isinstance(stream, dict) else {}
+    field_order = str(fields.get("field_order") or fields.get("fieldOrder") or "").lower()
+    scan_type = str(fields.get("scantype") or fields.get("scan_type") or "").lower()
+    tags = fields.get("tags") if isinstance(fields.get("tags"), dict) else {}
+    transfer = str(fields.get("color_transfer") or fields.get("transfer_characteristics") or "").lower()
+    if not transfer:
+        transfer = str(next((v for k, v in tags.items() if str(k).lower() in {"color_transfer", "transfer_characteristics"}), "") or "").lower()
+    title_bits = " ".join(str(v or "") for k, v in tags.items() if str(k).lower() == "title").lower()
+    is_interlaced = field_order in {"tt", "bb", "tb", "bt", "tff", "bff"} or scan_type in {"interlaced", "i"}
+    if label == "1080p" and is_interlaced:
+        label = "1080i"
+
+    dv_profile = fields.get("dv_profile") or fields.get("dovi_config")
+    is_dv = dv_profile not in (None, "", 0, False) or "dolby vision" in title_bits or re.search(r"\bDV\b", title_bits, re.IGNORECASE)
+    is_hdr = transfer in {"smpte2084", "pq", "arib-std-b67", "arib_std_b67", "hlg"} or fields.get("mastering_display") or fields.get("content_light") or "hdr" in title_bits
+    if is_dv:
+        label += " DV"
+    elif is_hdr:
+        label += " HDR"
+    return label
+
+
+def quality_label_from_probe(payload: Any) -> str | None:
+    normalized = usable_ffprobe(payload)
+    if normalized is None:
+        return None
+    for stream in normalized["streams"]:
+        if isinstance(stream, dict) and str(stream.get("codec_type", "")).lower() == "video":
+            try:
+                return quality_label_from_dimensions(int(stream.get("width") or 0), int(stream.get("height") or 0), stream)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def quality_label_from_text(value: Any) -> str | None:
+    """Parse only explicit resolution/interlace/HDR markers; source and codec names alone are insufficient."""
+    text = html.unescape(str(value or "")).lower()
+    if not text.strip():
+        return None
+    if re.search(r"(?<![a-z0-9])(?:8k|4320p)(?![a-z0-9])", text):
+        label = "4320p"
+    elif re.search(r"(?<![a-z0-9])(?:4k|uhd|2160p|2160i)(?![a-z0-9])", text):
+        label = "2160p"
+    elif re.search(r"(?<![a-z0-9])(?:1440p|2k)(?![a-z0-9])", text):
+        label = "1440p"
+    elif re.search(r"(?<![a-z0-9])1080i(?![a-z0-9])", text):
+        label = "1080i"
+    elif re.search(r"(?<![a-z0-9])1080p(?![a-z0-9])", text):
+        label = "1080p"
+    elif re.search(r"(?<![a-z0-9])720p(?![a-z0-9])", text):
+        label = "720p"
+    elif re.search(r"(?<![a-z0-9])576i?(?![a-z0-9])", text):
+        label = "576p"
+    elif re.search(r"(?<![a-z0-9])480i?(?![a-z0-9])", text):
+        label = "480p"
+    elif re.search(r"(?<![a-z0-9])360p(?![a-z0-9])", text):
+        label = "360p"
+    elif re.search(r"(?<![a-z0-9])240p(?![a-z0-9])", text):
+        label = "240p"
+    else:
+        return None
+
+    is_dv = bool(re.search(r"\b(?:dolby[ ._-]?vision|dovi|dv)\b", text))
+    is_hdr = bool(re.search(r"\b(?:hdr(?:10(?:\+|plus)?)?|hlg)\b", text))
+    if is_dv:
+        label += " DV"
+    elif is_hdr:
+        label += " HDR"
+    return label
+
+
+def quality_label_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    """Inspect explicitly named structured quality fields, not generic titles or codec fields."""
+    if not isinstance(metadata, dict):
+        return None
+    accepted = {
+        "quality", "qualityname", "qualitylabel", "resolution", "resolutionname",
+        "videoquality", "videoresolution", "videotype", "definition",
+    }
+    for key, value in metadata.items():
+        normalized_key = norm_key(str(key))
+        if normalized_key in accepted:
+            candidates = value if isinstance(value, (list, tuple)) else [value]
+            for candidate in candidates:
+                if isinstance(candidate, dict):
+                    nested = quality_label_from_metadata(candidate)
+                    if nested:
+                        return nested
+                elif candidate not in (None, ""):
+                    label = quality_label_from_text(candidate)
+                    if label:
+                        return label
+        if isinstance(value, dict) and normalized_key in {"info", "metadata", "release", "media", "mediainfo", "details"}:
+            label = quality_label_from_metadata(value)
+            if label:
+                return label
+    return None
+
+
+def quality_root_from_label(label: str | None) -> str:
+    if not label:
+        return "1080p"
+    match = re.search(r"(?<!\d)(4320|2160|1440|4k|uhd)(?!\d)", label.lower())
+    return "4K" if match else "1080p"
+
+
+def quality_marker(label: str | None) -> str:
+    return f" — {label}" if label else ""
+
+
+def media_logical_identity(snap: "TorrentSnapshot") -> str | None:
+    """Return a trusted provider identity for the logical movie/series, if present."""
+    metadata = snap.metadata if isinstance(snap.metadata, dict) else {}
+    ids: dict[str, str] = {}
+    if snap.category == "tv":
+        raw_series_ids = metadata_value(metadata, "seriesProviderIds", "showProviderIds", "tvProviderIds")
+        if isinstance(raw_series_ids, dict):
+            ids.update(provider_ids_from_mapping(raw_series_ids))
+        series_keys = {
+            "tmdb": ("seriesTmdbId", "showTmdbId", "tvTmdbId"),
+            "tvdb": ("seriesTvdbId", "showTvdbId", "tvdbSeriesId"),
+            "imdb": ("seriesImdbId", "showImdbId"),
+            "tvmaze": ("seriesTvmazeId", "showTvmazeId"),
+            "trakt": ("seriesTraktId", "showTraktId"),
+            "kinopoisk": ("seriesKinopoiskId", "showKinopoiskId"),
+        }
+        for kind, keys in series_keys.items():
+            value = metadata_value(metadata, *keys)
+            if value not in (None, ""):
+                _put_provider_id(ids, kind, value)
+    ids.update({k: v for k, v in provider_ids(metadata, snap.title).items() if k not in ids})
+    for kind in ("tmdb", "tvdb", "imdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"):
+        value = ids.get(kind)
+        if value:
+            return f"{kind}:{value}"
+    return None
+
+
+def source_episode_coordinates(path_value: str, torrent_title: str) -> tuple[int | None, int | None]:
+    """Return a season/episode only when explicit coordinates can be parsed."""
+    text = f"{path_value} {torrent_title}"
+    patterns = (
+        r"(?i)\bS(\d{1,2})E(\d{1,4})(?:[-,]\d{1,4})?\b",
+        r"(?i)\b(\d{1,2})x(\d{1,4})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+    season = season_number(path_value, torrent_title)
+    return season, None
+
+
+def display_year(metadata: dict[str, Any], title: str, *, tv: bool) -> str | None:
+    keys = ("seriesYear", "firstAiredYear", "year", "releaseYear") if tv else ("year", "releaseYear", "releasedYear")
+    value = metadata_value(metadata, *keys)
+    if value is not None:
+        match = re.search(r"\b(?:19|20)\d{2}\b", str(value))
+        if match:
+            return match.group(0)
+    match = re.search(r"\b(?:19|20)\d{2}\b", html.unescape(title or ""))
+    return match.group(0) if match else None
+
+
+def explicit_display_title(snap: "TorrentSnapshot", *, tv: bool) -> tuple[str, str | None, int]:
+    metadata = snap.metadata if isinstance(snap.metadata, dict) else {}
+    if tv:
+        explicit = metadata_value(metadata, "seriesTitle", "seriesName", "showTitle", "showName")
+        title = html.unescape(str(explicit)).strip() if explicit not in (None, "") else nfo_series_title(snap)
+        priority = 0 if explicit not in (None, "") else 1
+    else:
+        explicit = metadata_value(metadata, "movieTitle", "movieName", "originalTitle", "originalName")
+        title = html.unescape(str(explicit)).strip() if explicit not in (None, "") else nfo_movie_title(snap)
+        priority = 0 if explicit not in (None, "") else 1
+    year = display_year(metadata, snap.title, tv=tv)
+    if year:
+        title = re.sub(rf"\s*\({re.escape(year)}\)\s*$", "", title).strip()
+    return sanitize_component(title), year, priority
+
+
+def clean_media_component(title: str, year: str | None) -> str:
+    base = sanitize_component(title)
+    if year and not re.search(rf"\({re.escape(year)}\)$", base):
+        base = sanitize_component(f"{base} ({year})")
+    return base
 
 
 def nfo_xml_value(value: Any) -> str | None:
@@ -674,6 +888,11 @@ def migrate_nfo_v1_to_v2(content: str) -> tuple[str, bool]:
         return content, False
     root, urls = _nfo_xml_and_urls(content)
     root_tag = str(root.tag).lower()
+    # The v1/v2 schema included titles. Remove them before upgrading so cached
+    # metadata cannot override Kodi/Jellyfin scraper localization.
+    for child in list(root):
+        if str(child.tag).lower() in {"title", "originaltitle", "sorttitle", "showtitle", "name"}:
+            root.remove(child)
     tmdb = _nfo_tmdb_id(root)
     canonical_url = _nfo_combination_url(root_tag, tmdb)
     if canonical_url is None and urls and root_tag in {"movie", "tvshow"}:
@@ -681,7 +900,7 @@ def migrate_nfo_v1_to_v2(content: str) -> tuple[str, bool]:
         canonical_url = urls[0]
     migrated = _finalize_nfo(
         root,
-        source_comment="migrated_from_nfo_format=1",
+        source_comment="migrated_from_nfo_format=older",
         combination_url=canonical_url,
     )
     return migrated, True
@@ -774,6 +993,7 @@ class TorrentSnapshot:
     files: tuple[TorrentFile, ...]
     magnet: str | None = None
     quality: str | None = None
+    quality_label: str | None = None
 
 
 class TorrServerError(RuntimeError):
@@ -1292,7 +1512,7 @@ class MediaInfoResolver:
         return False
 
     @staticmethod
-    def _quality_from_nfo(path: Path) -> str | None:
+    def _quality_details_from_nfo(path: Path) -> tuple[str, str | None] | None:
         if not MediaInfoResolver._nfo_is_usable(path):
             return None
         try:
@@ -1302,9 +1522,24 @@ class MediaInfoResolver:
                 return None
             width = int((node.findtext("width") or "0").strip())
             height = int((node.findtext("height") or "0").strip())
-            return quality_from_dimensions(width, height)
+            if width <= 0 or height <= 0:
+                return None
+            stream: dict[str, Any] = {}
+            hdr = str(node.findtext("hdrtype") or "").lower()
+            if "dolby" in hdr or hdr in {"dv", "dolbyvision"}:
+                stream["dv_profile"] = 1
+            elif hdr:
+                stream["color_transfer"] = "smpte2084"
+            if (node.findtext("scantype") or "").lower() == "interlaced":
+                stream["field_order"] = "tt"
+            return quality_from_dimensions(width, height), quality_label_from_dimensions(width, height, stream)
         except Exception:
             return None
+
+    @staticmethod
+    def _quality_from_nfo(path: Path) -> str | None:
+        details = MediaInfoResolver._quality_details_from_nfo(path)
+        return details[0] if details else None
 
     def _cached_nfo(self, torrent: TorrentSnapshot, file: TorrentFile) -> tuple[Path, str] | None:
         """Find a valid existing NFO for this exact source file in any enabled output manifest."""
@@ -1324,7 +1559,7 @@ class MediaInfoResolver:
                     content = path.read_text(encoding="utf-8")
                     content, migrated = normalize_cached_nfo(content)
                     if migrated:
-                        LOG.info("NFO_MIGRATE path=%s from=v1 to=v%d", path, NFO_FORMAT_VERSION)
+                        LOG.info("NFO_MIGRATE path=%s from=legacy to=v%d", path, NFO_FORMAT_VERSION)
                     return path, content
         return None
 
@@ -1359,7 +1594,8 @@ class MediaInfoResolver:
         torrent: TorrentSnapshot,
         match: JacRedMatch | None,
         required_file_ids: set[int],
-    ) -> tuple[str, dict[int, dict[str, Any]], dict[int, str], dict[int, str]]:
+    ) -> tuple[str, str | None, dict[int, dict[str, Any]], dict[int, str], dict[int, str]]:
+        """Resolve one torrent-level quality and per-file ffprobe/NFO data."""
         candidates = self._video_files(torrent, self.extensions)
         if not candidates:
             raise RuntimeError(f"torrent {torrent.hash}: no video files")
@@ -1374,13 +1610,6 @@ class MediaInfoResolver:
             if found:
                 cached[file.file_id] = found
 
-        quality: str | None = None
-        primary_cached = cached.get(primary.file_id)
-        if primary_cached:
-            quality = self._quality_from_nfo(primary_cached[0])
-            if quality:
-                LOG.info("QUALITY_FROM_NFO hash=%s result=%s path=%s", torrent.hash, quality, primary_cached[0])
-
         probes: dict[int, dict[str, Any]] = {}
         sources: dict[int, str] = {}
         cached_contents: dict[int, str] = {}
@@ -1389,35 +1618,76 @@ class MediaInfoResolver:
             sources[file_id] = "nfo"
             self.stats["nfo_reused"] += 1
 
-        if quality is None:
-            if match is not None and match.ffprobe is not None:
-                quality = media_quality(match.ffprobe)
-                probes[primary.file_id] = match.ffprobe
-                sources[primary.file_id] = "jacred"
-                LOG.info("QUALITY hash=%s result=%s via=jacred", torrent.hash, quality)
-            else:
-                torr_payload = self._probe_torrserver(torrent, primary)
-                quality = media_quality(torr_payload)
-                probes[primary.file_id] = torr_payload
-                sources[primary.file_id] = "torrserver"
-                LOG.info("QUALITY hash=%s result=%s via=torrserver", torrent.hash, quality)
-        elif match is not None and match.ffprobe is not None and primary.file_id not in cached:
-            probes[primary.file_id] = match.ffprobe
-            sources[primary.file_id] = "jacred"
-            LOG.info("MEDIAINFO hash=%s file=%s quality=%s via=jacred", torrent.hash, primary.path, quality)
+        # The primary file decides the torrent-level root/label. Preserve each
+        # additional per-file probe below solely to keep its own NFO accurate.
+        root_quality: str | None = None
+        quality_label: str | None = None
+        primary_cached = cached.get(primary.file_id)
+        if primary_cached:
+            details = self._quality_details_from_nfo(primary_cached[0])
+            if details:
+                root_quality, quality_label = details
+                LOG.info("QUALITY_FROM_NFO hash=%s root=%s label=%s path=%s", torrent.hash, root_quality, quality_label, primary_cached[0])
 
+        if quality_label is None and primary.file_id not in cached:
+            primary_payload: dict[str, Any] | None = None
+            if match is not None and match.ffprobe is not None and usable_ffprobe(match.ffprobe) is not None:
+                primary_payload = usable_ffprobe(match.ffprobe)
+                sources[primary.file_id] = "jacred"
+                LOG.info("MEDIAINFO hash=%s file=%s via=jacred", torrent.hash, primary.path)
+            else:
+                try:
+                    primary_payload = self._probe_torrserver(torrent, primary)
+                    sources[primary.file_id] = "torrserver"
+                except Exception as exc:
+                    LOG.warning("FFPROBE_UNAVAILABLE hash=%s file=%s role=primary error=%s", torrent.hash, primary.path, exc)
+                    sources[primary.file_id] = "unavailable"
+            if primary_payload is not None:
+                probes[primary.file_id] = primary_payload
+                quality_label = quality_label_from_probe(primary_payload)
+                try:
+                    root_quality = media_quality(primary_payload)
+                except Exception:
+                    root_quality = None
+                if quality_label:
+                    LOG.info("QUALITY hash=%s root=%s label=%s via=%s", torrent.hash, root_quality, quality_label, sources[primary.file_id])
+
+        # Existing per-file probing remains in place: each NFO should describe
+        # the media item next to it, not copy technical stream details from the
+        # primary torrent file.
         for file in required:
             if file.file_id in cached or file.file_id in probes:
                 continue
-            payload = self._probe_torrserver(torrent, file)
-            probes[file.file_id] = payload
-            sources[file.file_id] = "torrserver"
+            try:
+                payload = self._probe_torrserver(torrent, file)
+                probes[file.file_id] = payload
+                sources[file.file_id] = "torrserver"
+            except Exception as exc:
+                sources[file.file_id] = "unavailable"
+                LOG.warning("FFPROBE_UNAVAILABLE hash=%s file=%s role=per-file-nfo error=%s", torrent.hash, file.path, exc)
 
-        # Quality may come from a cached NFO even when only a non-primary file is selected by output logic.
-        if quality not in {"4K", "1080p"}:
-            raise RuntimeError(f"torrent {torrent.hash}: quality unresolved")
-        LOG.info("MEDIAINFO_PLAN hash=%s required_files=%d cached_nfo=%d probes=%d", torrent.hash, len(required), len(cached), len(probes))
-        return quality, probes, sources, cached_contents
+        if quality_label is None:
+            quality_label = quality_label_from_metadata(torrent.metadata)
+            if quality_label:
+                LOG.info("QUALITY_FALLBACK hash=%s label=%s via=structured_metadata", torrent.hash, quality_label)
+        if quality_label is None and match is not None:
+            quality_label = quality_label_from_metadata(match.result)
+            if quality_label:
+                LOG.info("QUALITY_FALLBACK hash=%s label=%s via=exact_jacred_structured_metadata", torrent.hash, quality_label)
+        if quality_label is None:
+            quality_label = quality_label_from_text(torrent.title)
+            if quality_label:
+                LOG.info("QUALITY_FALLBACK hash=%s label=%s via=release_title", torrent.hash, quality_label)
+
+        if root_quality not in {"4K", "1080p"}:
+            root_quality = quality_root_from_label(quality_label)
+        if root_quality not in {"4K", "1080p"}:
+            root_quality = "1080p"
+        LOG.info(
+            "MEDIAINFO_PLAN hash=%s required_files=%d cached_nfo=%d probes=%d root=%s label=%s",
+            torrent.hash, len(required), len(cached), len(probes), root_quality, quality_label or "unknown",
+        )
+        return root_quality, quality_label, probes, sources, cached_contents
 
 
 @dataclass(frozen=True)
@@ -1442,6 +1712,10 @@ class OutputRunner:
         self.tv_unmatched_season = cfg["sync"]["tv_unmatched_season"]
         self.removals_this_run = 0
         self.removed_hashes: set[str] = set()
+        self.kodi_dirname_by_hash: dict[str, str] = {}
+        self.kodi_display_title_by_hash: dict[str, str] = {}
+        self.kodi_identity_by_hash: dict[str, str | None] = {}
+        self.kodi_hash_by_torrent: dict[str, str] = {}
 
     def _root_marker(self) -> Path:
         return self.manifest_path.parent / "root.marker"
@@ -1532,7 +1806,11 @@ class OutputRunner:
     def _record_dir(self, snap: TorrentSnapshot) -> Path:
         if snap.quality not in {"4K", "1080p"}:
             raise RuntimeError(f"torrent {snap.hash}: missing quality")
-        name = build_torrent_dir_name(snap.title, snap.metadata, snap.hash, snap.category, snap.files)
+        if self.spec.name == "kodi":
+            name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_component(snap.title))
+        else:
+            # Jellyfin's existing per-torrent naming and folder behavior is unchanged.
+            name = build_torrent_dir_name(snap.title, snap.metadata, snap.hash, snap.category, snap.files)
         return safe_join(self.root, snap.category, snap.quality, name)
 
     def _handle_missing_managed(self, snap: TorrentSnapshot, old: dict[str, Any] | None) -> bool:
@@ -1654,40 +1932,22 @@ class OutputRunner:
             return "hdr10"
         return None
 
-    def _nfo_content(self, snap: TorrentSnapshot, file: TorrentFile, payload: dict[str, Any], source: str) -> str:
+    def _nfo_content(self, snap: TorrentSnapshot, file: TorrentFile, payload: dict[str, Any] | None, source: str) -> str:
+        """Create title-free NFO metadata; each STRM's stream details come from its own source file."""
         import xml.etree.ElementTree as ET
         root_tag = "episodedetails" if snap.category == "tv" else "movie"
         root = ET.Element(root_tag)
         ids = provider_ids(snap.metadata, snap.title)
+
+        # Never emit title/name fields: Kodi may overwrite the localized scraper
+        # title with NFO titles after scraping, and Jellyfin should localize by ID.
         if snap.category == "tv":
-            add_xml_text(root, "showtitle", nfo_series_title(snap))
-            episode_title = metadata_value(snap.metadata, "episodeTitle", "episodeName", "episodeTitleOriginal")
-            add_xml_text(root, "title", str(episode_title).strip() if episode_title not in (None, "") else nfo_episode_title(file.path))
-            original_episode = metadata_value(snap.metadata, "episodeOriginalTitle", "episodeOriginalName")
-            add_xml_text(root, "originaltitle", original_episode)
-            season = season_number(file.path, snap.title)
+            season, episode = source_episode_coordinates(file.path, snap.title)
             if season is not None:
                 add_xml_text(root, "season", season)
-            m = re.search(r"\bS\d{1,2}E(\d{1,4})\b", file.path, flags=re.IGNORECASE)
-            if not m:
-                m = re.search(r"\b(\d{1,2})x(\d{1,4})\b", file.path, flags=re.IGNORECASE)
-                ep = m.group(2) if m else None
-            else:
-                ep = m.group(1)
-            if ep:
-                add_xml_text(root, "episode", int(ep))
-            add_xml_text(root, "aired", metadata_date(snap.metadata, "aired", "airDate", "episodeAirDate"))
-        else:
-            add_xml_text(root, "title", nfo_movie_title(snap))
-            add_xml_text(root, "originaltitle", metadata_original_title(snap.metadata, tv=False))
-            add_xml_text(root, "sorttitle", metadata_value(snap.metadata, "sortTitle", "sorttitle"))
-            add_xml_text(root, "premiered", metadata_date(snap.metadata, "premiered", "releaseDate", "released", "releasedate"))
-            add_xml_text(root, "releasedate", metadata_date(snap.metadata, "releaseDate", "released", "releasedate"))
-        year = metadata_date(snap.metadata, "year", "releaseYear", "releasedYear")
-        if year is None:
-            m = re.search(r"\b(19|20)\d{2}\b", snap.title)
-            year = m.group(0) if m else None
-        add_xml_text(root, "year", year)
+            if episode is not None:
+                add_xml_text(root, "episode", episode)
+
         default_type = "tmdb" if "tmdb" in ids else "imdb" if "imdb" in ids else "tvdb" if "tvdb" in ids else next(iter(ids), None)
         for kind, value in ids.items():
             if kind in {"tmdb", "imdb", "tvdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"}:
@@ -1699,76 +1959,285 @@ class OutputRunner:
                 node = ET.SubElement(root, "uniqueid", attrs)
                 node.text = value
 
-        normalized = usable_ffprobe(payload)
-        if normalized is None:
-            raise RuntimeError(f"cannot generate NFO: unusable ffprobe for {snap.hash}/{file.file_id}")
-        primary_video = next((s for s in normalized["streams"] if isinstance(s, dict) and str(s.get("codec_type", "")).lower() == "video"), None)
-        if primary_video is not None:
-            duration = stream_duration_seconds(primary_video)
-            if duration is not None:
-                add_xml_text(root, "runtime", int(round(duration / 60.0)))
-                add_xml_text(root, "durationinseconds", int(round(duration)))
-            _, top_aspect = stream_aspect(primary_video)
-            add_xml_text(root, "aspectratio", top_aspect)
+        normalized = usable_ffprobe(payload) if payload is not None else None
+        if normalized is not None:
+            fileinfo = ET.SubElement(root, "fileinfo")
+            details = ET.SubElement(fileinfo, "streamdetails")
+            for stream in normalized["streams"]:
+                if not isinstance(stream, dict):
+                    continue
+                stype = str(stream.get("codec_type", "")).lower()
+                if stype == "video":
+                    node = ET.SubElement(details, "video")
+                    append_common_stream_fields(node, stream)
+                    add_xml_text(node, "width", stream.get("width"))
+                    add_xml_text(node, "height", stream.get("height"))
+                    aspect, aspectratio = stream_aspect(stream)
+                    add_xml_text(node, "aspect", aspect)
+                    add_xml_text(node, "aspectratio", aspectratio)
+                    add_xml_text(node, "framerate", stream_framerate(stream))
+                    add_xml_text(node, "scantype", stream_scantype(stream))
+                    add_xml_text(node, "bitdepth", stream.get("bits_per_raw_sample", stream.get("bits_per_sample")))
+                    add_xml_text(node, "hdrtype", self._hdr_type(stream))
+                    add_xml_text(node, "stereomode", stream_tag_value(stream, "stereo_mode"))
+                elif stype == "audio":
+                    node = ET.SubElement(details, "audio")
+                    append_common_stream_fields(node, stream)
+                    add_xml_text(node, "channels", stream.get("channels"))
+                    add_xml_text(node, "samplingrate", stream.get("sample_rate"))
+                elif stype == "subtitle":
+                    node = ET.SubElement(details, "subtitle")
+                    append_common_stream_fields(node, stream)
 
-        fileinfo = ET.SubElement(root, "fileinfo")
-        details = ET.SubElement(fileinfo, "streamdetails")
-        for stream in normalized["streams"]:
-            if not isinstance(stream, dict):
-                continue
-            stype = str(stream.get("codec_type", "")).lower()
-            if stype == "video":
-                node = ET.SubElement(details, "video")
-                append_common_stream_fields(node, stream)
-                add_xml_text(node, "width", stream.get("width"))
-                add_xml_text(node, "height", stream.get("height"))
-                aspect, aspectratio = stream_aspect(stream)
-                add_xml_text(node, "aspect", aspect)
-                add_xml_text(node, "aspectratio", aspectratio)
-                add_xml_text(node, "framerate", stream_framerate(stream))
-                add_xml_text(node, "scantype", stream_scantype(stream))
-                add_xml_text(node, "bitdepth", stream.get("bits_per_raw_sample", stream.get("bits_per_sample")))
-                add_xml_text(node, "hdrtype", self._hdr_type(stream))
-                add_xml_text(node, "stereomode", stream_tag_value(stream, "stereo_mode"))
-            elif stype == "audio":
-                node = ET.SubElement(details, "audio")
-                append_common_stream_fields(node, stream)
-                add_xml_text(node, "channels", stream.get("channels"))
-                add_xml_text(node, "samplingrate", stream.get("sample_rate"))
-            elif stype == "subtitle":
-                node = ET.SubElement(details, "subtitle")
-                append_common_stream_fields(node, stream)
-        tmdb = ids.get("tmdb")
+        # Combination NFO URLs apply to movies only; episodes use ordinary NFO.
+        combination_url = _nfo_combination_url("movie", ids.get("tmdb")) if root_tag == "movie" else None
         return _finalize_nfo(
             root,
             source_comment=f"media_info_source={source}",
-            combination_url=_nfo_combination_url(str(root.tag).lower(), tmdb),
+            combination_url=combination_url,
         )
 
     def _tvshow_nfo_content(self, snap: TorrentSnapshot) -> str:
         import xml.etree.ElementTree as ET
         root = ET.Element("tvshow")
-        add_xml_text(root, "title", nfo_series_title(snap))
-        add_xml_text(root, "originaltitle", metadata_original_title(snap.metadata, tv=True))
-        add_xml_text(root, "sorttitle", metadata_value(snap.metadata, "sortTitle", "sorttitle"))
-        year = metadata_date(snap.metadata, "year", "releaseYear", "firstAiredYear")
-        add_xml_text(root, "year", year)
-        add_xml_text(root, "premiered", metadata_date(snap.metadata, "premiered", "firstAired", "firstAiredDate"))
         ids = provider_ids(snap.metadata, snap.title)
         default_type = "tmdb" if "tmdb" in ids else "imdb" if "imdb" in ids else "tvdb" if "tvdb" in ids else next(iter(ids), None)
         for kind, value in ids.items():
-            if kind in {"tmdb", "imdb", "tvdb"}:
-                add_xml_text(root, f"{kind}id", value)
-            attrs = {"type": kind}
-            if kind == default_type:
-                attrs["default"] = "true"
-            node = ET.SubElement(root, "uniqueid", attrs)
-            node.text = value
+            if kind in {"tmdb", "imdb", "tvdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"}:
+                if kind in {"tmdb", "imdb", "tvdb"}:
+                    add_xml_text(root, f"{kind}id", value)
+                attrs = {"type": kind}
+                if kind == default_type:
+                    attrs["default"] = "true"
+                node = ET.SubElement(root, "uniqueid", attrs)
+                node.text = value
         return _finalize_nfo(
             root,
             source_comment="kind=tvshow",
             combination_url=_nfo_combination_url("tvshow", ids.get("tmdb")),
         )
+
+    def _prepare_kodi_components(self, snapshots: dict[str, TorrentSnapshot]) -> None:
+        """Choose canonical shared directory names and collision-safe short hashes for one sync."""
+        self.kodi_dirname_by_hash: dict[str, str] = {}
+        self.kodi_display_title_by_hash: dict[str, str] = {}
+        self.kodi_identity_by_hash: dict[str, str | None] = {}
+        self.kodi_hash_by_torrent = {h: h[:8] for h in snapshots}
+        by_prefix: dict[str, list[str]] = {}
+        for h in snapshots:
+            by_prefix.setdefault(h[:8], []).append(h)
+        for hashes in by_prefix.values():
+            if len(hashes) > 1:
+                length = 9
+                while length < 41 and len({h[:length] for h in hashes}) < len(hashes):
+                    length += 1
+                for h in hashes:
+                    self.kodi_hash_by_torrent[h] = h[:length]
+
+        grouped: dict[tuple[str, str, str], list[tuple[int, str, str | None, str]]] = {}
+        fallback: dict[tuple[str, str, str], list[str]] = {}
+        for h, snap in snapshots.items():
+            quality_root = snap.quality if snap.quality in {"4K", "1080p"} else "1080p"
+            identity = media_logical_identity(snap) if snap.category in {"tv", "movie"} else None
+            self.kodi_identity_by_hash[h] = identity
+            if identity:
+                title, year, priority = explicit_display_title(snap, tv=snap.category == "tv")
+                grouped.setdefault((snap.category, quality_root, identity), []).append((priority, title, year, h))
+            else:
+                # Unidentified TV/movie torrents and unsupported categories retain
+                # their own torrent-title directory and original inner hierarchy.
+                name = sanitize_component(snap.title)
+                fallback.setdefault((snap.category, quality_root, name.casefold()), []).append(h)
+                self.kodi_display_title_by_hash[h] = name
+
+        # The same known logical ID always gets one canonical display name, even
+        # when release titles and internal torrent folder names differ.
+        base_components: dict[tuple[str, str, str], tuple[str, str | None]] = {}
+        for key, candidates in grouped.items():
+            candidates.sort(key=lambda item: (item[0], item[1].casefold(), item[2] or "", item[3]))
+            _, title, year, _ = candidates[0]
+            base_components[key] = (title, year)
+            for _, _, _, h in candidates:
+                self.kodi_display_title_by_hash[h] = title
+
+        collisions: dict[tuple[str, str, str], set[str]] = {}
+        for (category, quality_root, identity), (title, year) in base_components.items():
+            component = clean_media_component(title, year)
+            collisions.setdefault((category, quality_root, component.casefold()), set()).add(identity)
+        for key, (title, year) in base_components.items():
+            category, quality_root, identity = key
+            component = clean_media_component(title, year)
+            if len(collisions.get((category, quality_root, component.casefold()), set())) > 1:
+                kind, value = identity.split(":", 1)
+                component = sanitize_component(f"{component} [{kind}-{value}]")
+            for _, _, _, h in grouped[key]:
+                self.kodi_dirname_by_hash[h] = component
+
+        # Add a short hash to an unidentified release directory only if another
+        # current torrent would otherwise claim the same directory.
+        for key, hashes in fallback.items():
+            if len(hashes) == 1:
+                h = hashes[0]
+                self.kodi_dirname_by_hash[h] = self.kodi_display_title_by_hash[h]
+            else:
+                for h in hashes:
+                    self.kodi_dirname_by_hash[h] = sanitize_component(
+                        f"{self.kodi_display_title_by_hash[h]} [{self.kodi_hash_by_torrent[h]}]"
+                    )
+
+    def _kodi_episode_basename(self, snap: TorrentSnapshot, file: TorrentFile, duplicate: bool = False) -> str:
+        title = self.kodi_display_title_by_hash.get(snap.hash) or extract_tv_series_name(snap.title, snap.files)
+        season, episode = source_episode_coordinates(file.path, snap.title)
+        if episode is not None and season is not None:
+            stem = f"{title} S{season:02d}E{episode:02d}"
+        elif episode is not None:
+            stem = f"{title} E{episode:02d}"
+        else:
+            stem = Path(file.path).stem or Path(file.path).name
+        label = quality_marker(snap.quality_label)
+        hash_label = self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])
+        suffix = f"{label} [{hash_label}]"
+        if duplicate:
+            suffix += f" [file{file.order + 1:02d}]"
+        return bounded_strm_leaf(f"{stem}{suffix}", f"{hash_label}-{file.order + 1}")
+
+    def _kodi_fallback_basename(self, snap: TorrentSnapshot, file: TorrentFile) -> str:
+        stem = Path(file.path).stem or Path(file.path).name
+        suffix = f"{quality_marker(snap.quality_label)} [{self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])}]"
+        return bounded_strm_leaf(f"{stem}{suffix}", f"{snap.hash[:8]}-{file.order + 1}")
+
+    def _sync_kodi_torrent(
+        self,
+        snap: TorrentSnapshot,
+        old: dict[str, Any] | None,
+        media_payloads: dict[int, dict[str, Any]],
+        media_sources: dict[int, str],
+        cached_nfo: dict[int, str],
+    ) -> dict[str, Any] | None:
+        if snap.quality not in {"4K", "1080p"}:
+            snap = replace(snap, quality="1080p")
+        directory_name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_component(snap.title))
+        torrent_dir = safe_join(self.root, snap.category, snap.quality, directory_name)
+        self._assert_no_symlink(torrent_dir.parent)
+        self._assert_no_symlink(torrent_dir)
+        rel_torrent_dir = torrent_dir.relative_to(self.root).as_posix()
+        if torrent_dir.exists() and not torrent_dir.is_dir():
+            LOG.error("ERROR output=kodi hash=%s destination=%s reason=destination_exists_as_file", snap.hash, torrent_dir)
+            return None
+        self._mkdir(torrent_dir)
+
+        desired: dict[str, dict[str, Any]] = {}
+        desired_dirs: set[str] = {rel_torrent_dir}
+        video_files = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
+        if not video_files:
+            raise RuntimeError(f"torrent {snap.hash}: no video files")
+        primary = sorted(video_files, key=lambda f: (-f.length, f.path))[0]
+        identity = self.kodi_identity_by_hash.get(snap.hash)
+        normalized_tv = snap.category == "tv" and identity is not None
+        normalized_movie = snap.category == "movie" and identity is not None
+
+        targets: list[tuple[TorrentFile, Path, str, str, bool]] = []
+        if snap.category == "movie" and (normalized_movie or True):
+            # Preserve the existing Elementum movie model: one torrent-level link,
+            # using the primary video's file-specific NFO data.
+            base = self.kodi_display_title_by_hash.get(snap.hash) or nfo_movie_title(snap)
+            label = quality_marker(snap.quality_label)
+            short = self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])
+            leaf = bounded_strm_leaf(f"{base}{label} [{short}]", f"{short}-{primary.file_id}")
+            targets.append((primary, torrent_dir, self._elementum_url(snap), leaf, False))
+        else:
+            duplicate_groups: dict[tuple[int | None, int | None], list[TorrentFile]] = {}
+            if normalized_tv:
+                for file in video_files:
+                    coords = source_episode_coordinates(file.path, snap.title)
+                    duplicate_groups.setdefault(coords, []).append(file)
+            for file in video_files:
+                if normalized_tv:
+                    season, episode = source_episode_coordinates(file.path, snap.title)
+                    if season is None:
+                        season = self.tv_unmatched_season
+                        LOG.warning("SEASON_FALLBACK output=kodi hash=%s file=%s season=%02d", snap.hash, file.path, season)
+                    target_dir = safe_join(torrent_dir, f"Season {season:02d}")
+                    leaf = self._kodi_episode_basename(
+                        snap, file, duplicate=len(duplicate_groups.get(source_episode_coordinates(file.path, snap.title), [])) > 1
+                    )
+                else:
+                    # Unknown identity: retain the source torrent's internal hierarchy.
+                    target_dir = safe_join(torrent_dir, *PurePosixPath(file.path).parent.parts)
+                    leaf = self._kodi_fallback_basename(snap, file)
+                playback = self._elementum_url(snap, file)
+                targets.append((file, target_dir, playback, leaf, normalized_tv))
+
+        for file, target_dir, url, leaf, is_normalized_tv in targets:
+            self._assert_no_symlink(target_dir)
+            self._mkdir(target_dir)
+            desired_dirs.add(target_dir.relative_to(self.root).as_posix())
+            strm_path = safe_join(target_dir, leaf + ".strm")
+            rel_strm = strm_path.relative_to(self.root).as_posix()
+            nfo_path = strm_path.with_suffix(".nfo")
+            rel_nfo = nfo_path.relative_to(self.root).as_posix()
+            if rel_strm in desired:
+                raise RuntimeError(f"duplicate planned Kodi destination {rel_strm!r} for torrent {snap.hash}")
+            if strm_path.exists() and not (isinstance(old, dict) and rel_strm in old.get("files", {})):
+                raise RuntimeError(f"unmanaged Kodi file already occupies destination {rel_strm!r}")
+
+            payload = media_payloads.get(file.file_id)
+            source = media_sources.get(file.file_id, "unavailable")
+            if payload is not None:
+                nfo_content = self._nfo_content(snap, file, payload, source)
+            elif file.file_id in cached_nfo:
+                nfo_content = cached_nfo[file.file_id]
+                nfo_content, _ = normalize_cached_nfo(nfo_content)
+                source = "nfo"
+            elif nfo_path.is_file():
+                # A current item NFO is already at the same deterministic path.
+                old_text = nfo_path.read_text(encoding="utf-8", errors="replace")
+                if nfo_format_version(old_text) == NFO_FORMAT_VERSION:
+                    nfo_content = old_text
+                else:
+                    nfo_content = self._nfo_content(snap, file, None, source)
+            else:
+                nfo_content = self._nfo_content(snap, file, None, source)
+
+            self._write_nfo(nfo_path, nfo_content, snap.hash, file.path, rel_nfo)
+            self._write_strm(strm_path, url, snap.hash, file.path, rel_strm)
+            desired[rel_strm] = {
+                "source_path": file.path,
+                "file_id": file.file_id,
+                "file_order": file.order,
+                "length": file.length,
+                "url": url,
+                "content_sha256": sha256_text(url + "\n"),
+                "nfo": rel_nfo,
+                "nfo_sha256": sha256_text(nfo_content),
+                "media_info_source": source,
+                "quality_root": snap.quality,
+                "quality_label": snap.quality_label,
+                "logical_identity": identity,
+            }
+
+        tvshow_nfo_rel: str | None = None
+        if normalized_tv:
+            tvshow_path = safe_join(torrent_dir, "tvshow.nfo")
+            tvshow_nfo_rel = tvshow_path.relative_to(self.root).as_posix()
+            self._write_nfo(tvshow_path, self._tvshow_nfo_content(snap), snap.hash, snap.title, tvshow_nfo_rel)
+
+        ids = provider_ids(snap.metadata, snap.title)
+        metadata_record = {f"{kind}id": value for kind, value in ids.items()}
+        return {
+            "hash": snap.hash,
+            "title": snap.title,
+            "category": snap.category,
+            "quality": snap.quality,
+            "quality_label": snap.quality_label,
+            "metadata": metadata_record,
+            "magnet": snap.magnet or constructed_magnet(snap.hash, snap.title),
+            "directory": rel_torrent_dir,
+            "tvshow_nfo": tvshow_nfo_rel,
+            "mode": self.spec.name,
+            "files": desired,
+            "directories": sorted(desired_dirs),
+        }
 
     def _sync_torrent(
         self,
@@ -1778,6 +2247,8 @@ class OutputRunner:
         media_sources: dict[int, str],
         cached_nfo: dict[int, str],
     ) -> dict[str, Any] | None:
+        if self.spec.name == "kodi":
+            return self._sync_kodi_torrent(snap, old, media_payloads, media_sources, cached_nfo)
         torrent_dir = self._record_dir(snap)
         self._assert_no_symlink(torrent_dir.parent)
         self._assert_no_symlink(torrent_dir)
@@ -1862,10 +2333,12 @@ class OutputRunner:
                 nfo_content = nfo_path.read_text(encoding="utf-8")
                 nfo_content, migrated = normalize_cached_nfo(nfo_content)
                 if migrated:
-                    LOG.info("NFO_MIGRATE path=%s from=v1 to=v%d", nfo_path, NFO_FORMAT_VERSION)
+                    LOG.info("NFO_MIGRATE path=%s from=legacy to=v%d", nfo_path, NFO_FORMAT_VERSION)
                 source = "nfo"
             else:
-                raise RuntimeError(f"missing usable NFO/media probe for {snap.hash}/{file.file_id} output={self.spec.name}")
+                # ffprobe may be unavailable. Keep a valid identity-only NFO rather
+                # than dropping the STRM; the quality fallback has already run.
+                nfo_content = self._nfo_content(snap, file, None, "unavailable")
 
             self._write_nfo(nfo_path, nfo_content, snap.hash, file.path, rel_nfo)
             self._write_strm(strm_path, url, snap.hash, file.path, rel_strm)
@@ -1921,6 +2394,9 @@ class OutputRunner:
         }
 
     def _remove_stale(self, h: str, record: dict[str, Any], reason: str) -> None:
+        if self.spec.name == "kodi":
+            LOG.info("KODI_STALE_DEFERRED hash=%s reason=%s", h, reason)
+            return
         rel_dir = record.get("directory") if isinstance(record, dict) else None
         if not isinstance(rel_dir, str):
             LOG.warning("STALE_UNKNOWN_PATH output=%s hash=%s reason=%s", self.spec.name, h, reason)
@@ -1928,8 +2404,61 @@ class OutputRunner:
         path = safe_join(self.root, *PurePosixPath(rel_dir).parts)
         self._delete_tree(path, h, reason)
 
+    def _cleanup_unreferenced_kodi_paths(self, old_records: dict[str, Any], new_records: dict[str, Any]) -> None:
+        """Delete only previously managed Kodi files that no new record references."""
+        if self.spec.name != "kodi":
+            return
+
+        def collect(records: dict[str, Any]) -> set[str]:
+            paths: set[str] = set()
+            for record in records.values():
+                if not isinstance(record, dict):
+                    continue
+                files = record.get("files", {})
+                if isinstance(files, dict):
+                    for rel, item in files.items():
+                        if isinstance(rel, str) and rel:
+                            paths.add(rel)
+                        if isinstance(item, dict):
+                            nfo_rel = item.get("nfo")
+                            if isinstance(nfo_rel, str) and nfo_rel:
+                                paths.add(nfo_rel)
+                tvshow = record.get("tvshow_nfo")
+                if isinstance(tvshow, str) and tvshow:
+                    paths.add(tvshow)
+            return paths
+
+        old_paths = collect(old_records)
+        new_paths = collect(new_records)
+        for rel in sorted(old_paths - new_paths, key=lambda p: (p.count("/"), p), reverse=True):
+            path = safe_join(self.root, *PurePosixPath(rel).parts)
+            self._assert_no_symlink(path)
+            if path.is_file():
+                if self.dry_run:
+                    LOG.info("DRY-RUN KODI_REMOVE_MANAGED_FILE path=%s reason=unreferenced_after_sync", rel)
+                else:
+                    path.unlink()
+                    LOG.info("KODI_REMOVE_MANAGED_FILE path=%s reason=unreferenced_after_sync", rel)
+            # Prune empty parents but never remove the output root or state dir.
+            parent = path.parent
+            state_dir = (self.root / self.spec.manifest_rel).parent
+            while parent != self.root and parent != state_dir:
+                try:
+                    if self.dry_run:
+                        if any(parent.iterdir()):
+                            break
+                        LOG.info("DRY-RUN KODI_PRUNE_EMPTY_DIR path=%s", parent.relative_to(self.root).as_posix())
+                    else:
+                        parent.rmdir()
+                        LOG.info("KODI_PRUNE_EMPTY_DIR path=%s", parent.relative_to(self.root).as_posix())
+                except OSError:
+                    break
+                parent = parent.parent
+
     def run(self, snapshots: dict[str, TorrentSnapshot], old_manifest: dict[str, Any], media_by_hash: dict[str, dict[int, dict[str, Any]]], media_sources_by_hash: dict[str, dict[int, str]], cached_nfo_by_hash: dict[str, dict[int, str]], *, skip_hashes: set[str]) -> tuple[int, int, int, int]:
         self.prepare_root()
+        if self.spec.name == "kodi":
+            self._prepare_kodi_components(snapshots)
         old_records = old_manifest.get("torrents", {})
         if not isinstance(old_records, dict):
             raise RuntimeError(f"manifest.torrents must be object for output {self.spec.name}")
@@ -1974,6 +2503,8 @@ class OutputRunner:
             else:
                 updated += 1
 
+        if self.spec.name == "kodi":
+            self._cleanup_unreferenced_kodi_paths(old_records, new_manifest["torrents"])
         if not self.dry_run:
             comparable_old = dict(old_manifest)
             comparable_new = dict(new_manifest)
@@ -2150,7 +2681,7 @@ class SyncCoordinator:
                 unresolved += 1
                 continue
             try:
-                quality, probes, sources, cached = resolver.prepare(snap, matches.get(h), required)
+                quality, quality_label, probes, sources, cached = resolver.prepare(snap, matches.get(h), required)
             except Exception as exc:
                 LOG.error("QUALITY_SKIP hash=%s title=%r error=%s", h, snap.title, exc)
                 unresolved += 1
@@ -2158,7 +2689,7 @@ class SyncCoordinator:
             media_by_hash[h] = probes
             media_sources_by_hash[h] = sources
             cached_nfo_by_hash[h] = cached
-            quality_ready[h] = replace(snap, quality=quality)
+            quality_ready[h] = replace(snap, quality=quality, quality_label=quality_label)
 
         removed_hashes: set[str] = set()
         totals = {"created": 0, "updated": 0, "unchanged": 0, "failed": unresolved}
