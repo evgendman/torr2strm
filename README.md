@@ -74,7 +74,7 @@ Important details:
 - A non-empty TorrServer category other than `movie` or `tv` is treated as unknown and remains `_uncategorized`. Because the source field was non-empty, JacRed does not override it.
 - The program never guesses movie versus TV from title text.
 
-The second directory level is a fixed two-way split: `4K` when the primary eligible video stream has a maximum dimension of at least 3840 pixels; otherwise `1080p`. This is the torrent-level quality root and does not claim that every file is 1080p.
+The second directory level is a fixed two-way split: `4K` if any already-available source proves 4K-class resolution; otherwise `1080p`. The root uses all existing evidence, not a new media probe, and does not claim that every file in either branch has that branch's nominal quality.
 
 Kodi's normalized tree is separate from Jellyfin's existing tree. Identified releases of one movie/series share a canonical logical directory under each quality root. Identified TV episodes are placed under `Season NN`; unidentified series keep the torrent release-title directory and original internal file hierarchy. Unknown IDs are never fabricated and title similarity alone never merges torrents.
 
@@ -100,7 +100,7 @@ JacRed cannot change the category when TorrServer already supplies a non-empty c
 
 ### Quality classification without new ffprobe requests
 
-\torr2strm does **not** run local ffprobe and does **not** call TorrServer's \`/ffp/{hash}/{file_id}\` endpoint. This intentionally avoids probing every new movie/episode just to decide which of the two output roots it belongs in.
+torr2strm does **not** run local ffprobe and does **not** call TorrServer's `/ffp/{hash}/{file_id}` endpoint. This intentionally avoids probing every new movie/episode just to decide which of the two output roots it belongs in.
 
 Only data that is already available is considered:
 
@@ -109,19 +109,19 @@ Only data that is already available is considered:
 3. Explicit structured quality/resolution fields in TorrServer metadata or an exact-hash JacRed result.
 4. Explicit resolution/interlace/HDR/Dolby Vision markers in the release title.
 
-A metadata field or release title cannot establish quality from source/codec words alone: \`WEB-DL\`, \`BluRay\`, \`HEVC\` and \`HD\` are not proof of a particular resolution. An exact JacRed hash match is required before its ffprobe or quality fields may be used.
+A metadata field or release title cannot establish quality from source/codec words alone: `WEB-DL`, `BluRay`, `HEVC` and `HD` are not proof of a particular resolution. An exact JacRed hash match is required before its ffprobe or quality fields may be used.
 
 #### Quality root and display label are separate
 
-There are only two roots: \`4K\` and \`1080p\`. The root uses an affirmative-evidence rule: **if any available source supplies evidence of 4K-class resolution, the torrent goes into \`4K\`; otherwise it goes into \`1080p\`**. A lower-quality value from one source does not cancel a 4K claim found in another source.
+There are only two roots: `4K` and `1080p`. The root uses an affirmative-evidence rule: **if any available source supplies evidence of 4K-class resolution, the torrent goes into `4K`; otherwise it goes into `1080p`**. A lower-quality value from one source does not cancel a 4K claim found in another source.
 
-The display label is selected from the highest-priority available evidence, in the order listed above. For example, a cached ffprobe label of \`720p\` and a release title containing \`2160p\` can produce a \`4K\` root but retain \`720p\` as the display label. The root is a grouping/access branch, not a promise that every release in it is actually 4K.
+The display label is selected from the highest-priority available evidence, in the order listed above. For example, a cached ffprobe label of `720p` and a release title containing `2160p` can produce a `4K` root but retain `720p` as the display label. The root is a grouping/access branch, not a promise that every release in it is actually 4K.
 
-If no source contains a usable quality value, the item goes to \`1080p\` and its basename has **no quality suffix**. Unknown quality is never relabelled as \`1080p\` merely because it lives in that root.
+If no source contains a usable quality value, the item goes to `1080p` and its basename has **no quality suffix**. Unknown quality is never relabelled as `1080p` merely because it lives in that root.
 
 When an existing ffprobe payload is available for the release, its technical stream details may be written into the matching primary-file NFO. Existing per-file NFOs are reused when valid. If no ffprobe data already exists for an item, torr2strm writes the NFO's identity fields only; it does not probe the media to fill in stream details.
 
-Legacy \`[quality]\` timeout/retry settings may remain in an existing TOML file, but v1.4.1 no longer uses them and no ffprobe binary or \`/ffp/status\` check is required.
+Legacy `[quality]` timeout/retry settings may remain in an existing TOML file, but v1.4.1 no longer uses them and no ffprobe binary or `/ffp/status` check is required.
 
 ## Magnet handling for Kodi
 
@@ -192,7 +192,7 @@ Main sections:
 - `[torrserver]`: TorrServer base URL and API/metadata timeouts.
 - `[outputs.jellyfin]` and `[outputs.kodi]`: output roots, independent manifests and enable flags. Only Jellyfin can enable reverse deletion.
 - `[sync]`: eligible video extensions and the fallback season for TV files whose season cannot be inferred.
-- `[quality]`: timeout and retry policy for TorrServer ffprobe requests.
+- `[quality]`: legacy timeout/retry settings; ignored in v1.4.1 and removable.
 - `[jacred]`: optional base URL, API key, indexer ID, result limit, timeout and retries.
 - `[logging]`: log verbosity.
 
