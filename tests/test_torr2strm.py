@@ -195,6 +195,7 @@ def test_quality_root_and_display_label_are_separate_and_quality_fallback_is_exp
     assert quality_label_from_text("WEB-DL HEVC") is None
     assert quality_label_from_metadata({"quality": "720p WEB-DL"}) == "720p"
     assert quality_root_from_label("720p") == "1080p"
+    assert quality_root_from_label("1440p") == "1080p"
     assert quality_root_from_label("2160p HDR") == "4K"
     assert usable_ffprobe(probe()) is not None
 
@@ -646,3 +647,42 @@ def test_per_file_nfo_details_are_not_replaced_with_primary_quality_stream():
         assert "<width>1280</width>" in text
         assert "<height>720</height>" in text
         assert "<title>" not in text
+
+
+def test_known_series_files_without_episode_coordinates_do_not_get_duplicate_file_suffix():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "9" * 40
+        t = torrent(
+            h=h, title="Canonical Series Pack S01", category="tv",
+            paths=["Disc/part-a.mkv", "Disc/part-b.mkv"],
+            lengths=[1000, 900],
+            data={"seriesTmdbId": 902, "seriesTitle": "Canonical Series"},
+        )
+        p = probe(1920, 1080)
+        client = FakeClient([t], probes={(h, 1): p, (h, 2): p})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        names = sorted(p.name for p in (kr / "tv" / "1080p" / "Canonical Series" / "Season 01").rglob("*.strm"))
+        assert len(names) == 2
+        assert all("[file" not in name for name in names)
+
+
+def test_duplicate_episode_in_same_torrent_gets_original_file_ordinal_only_for_collision():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "8" * 40
+        t = torrent(
+            h=h, title="Canonical Series S01", category="tv",
+            paths=["S01E01-copyA.mkv", "S01E01-copyB.mkv", "S01E02.mkv"],
+            lengths=[1000, 900, 800],
+            data={"seriesTmdbId": 903, "seriesTitle": "Canonical Series"},
+        )
+        p = probe(1920, 1080)
+        client = FakeClient([t], probes={(h, 1): p, (h, 2): p, (h, 3): p})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        names = sorted(p.name for p in (kr / "tv" / "1080p" / "Canonical Series" / "Season 01").rglob("*.strm"))
+        assert len(names) == 3
+        assert sum("[file" in name for name in names) == 2
+        assert any("S01E02" in name and "[file" not in name for name in names)
