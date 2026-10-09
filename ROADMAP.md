@@ -56,7 +56,7 @@ These decisions are settled and should not be reopened during implementation unl
    4. unknown quality.
 8. Derive `quality_root` and `quality_label` separately from the chosen result. If the quality is unknown, use the `1080p` root but **omit the quality label** from the basename. Do not turn the `1080p` root into a false claim about the actual resolution.
 9. Normalize known quality markers to a consistent label. Examples include `480p`, `720p`, `1080p`, `1080i`, `1440p`, `2160p`, `2160p HDR`, and `2160p DV`. Add `HDR` or `DV` only when supported by usable ffprobe data or an explicit, recognized release-title marker. Do not infer resolution from words such as `WEB-DL`, `BluRay`, `HEVC`, or `HD` alone.
-10. A 4K classification from usable dimensions remains `max(width, height) >= 2160`; all smaller dimensions belong to the `1080p` root. The same torrent-level label is used for links representing that torrent, including its episodes.
+10. A 4K classification from usable dimensions remains `max(width, height) >= 3840`; all smaller dimensions belong to the `1080p` root. The same torrent-level label is used for links representing that torrent, including its episodes.
 
 ### 3.3 Kodi grouping and item names
 
