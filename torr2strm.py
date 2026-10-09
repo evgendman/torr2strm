@@ -398,6 +398,20 @@ def quality_marker(label: str | None) -> str:
     return f" — {label}" if label else ""
 
 
+
+def bounded_kodi_leaf(title: str, quality_label: str | None, short_hash: str, file_ordinal: int | None = None) -> str:
+    """Keep quality/hash suffixes intact even when a human title exceeds NAME_MAX."""
+    prefix = sanitize_component(title)
+    suffix = f"{quality_marker(quality_label)} [{short_hash}]"
+    if file_ordinal is not None:
+        suffix += f" [file{file_ordinal:02d}]"
+    max_bytes = 255 - len(".strm".encode("utf-8"))
+    budget = max_bytes - len(suffix.encode("utf-8"))
+    if budget < 1:
+        raise ValueError("quality/hash suffix is too long for a Linux filename")
+    prefix = truncate_utf8(prefix, budget).rstrip().rstrip(".") or "_"
+    return f"{prefix}{suffix}"
+
 def media_logical_identity(snap: "TorrentSnapshot") -> str | None:
     """Return a trusted provider identity for the logical movie/series, if present."""
     metadata = snap.metadata if isinstance(snap.metadata, dict) else {}
@@ -2161,15 +2175,20 @@ class OutputRunner:
             stem = Path(file.path).stem or Path(file.path).name
         label = quality_marker(snap.quality_label)
         hash_label = self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])
-        suffix = f"{label} [{hash_label}]"
-        if duplicate:
-            suffix += f" [file{file.order + 1:02d}]"
-        return bounded_strm_leaf(f"{stem}{suffix}", f"{hash_label}-{file.order + 1}")
+        return bounded_kodi_leaf(
+            stem,
+            snap.quality_label,
+            hash_label,
+            file_ordinal=(file.order + 1) if duplicate else None,
+        )
 
     def _kodi_fallback_basename(self, snap: TorrentSnapshot, file: TorrentFile) -> str:
         stem = Path(file.path).stem or Path(file.path).name
-        suffix = f"{quality_marker(snap.quality_label)} [{self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])}]"
-        return bounded_strm_leaf(f"{stem}{suffix}", f"{snap.hash[:8]}-{file.order + 1}")
+        return bounded_kodi_leaf(
+            stem,
+            snap.quality_label,
+            self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8]),
+        )
 
     def _sync_kodi_torrent(
         self,
@@ -2206,9 +2225,8 @@ class OutputRunner:
             # Preserve the existing Elementum movie model: one torrent-level link,
             # using the primary video's file-specific NFO data.
             base = self.kodi_display_title_by_hash.get(snap.hash) or nfo_movie_title(snap)
-            label = quality_marker(snap.quality_label)
             short = self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8])
-            leaf = bounded_strm_leaf(f"{base}{label} [{short}]", f"{short}-{primary.file_id}")
+            leaf = bounded_kodi_leaf(base, snap.quality_label, short)
             targets.append((primary, torrent_dir, self._elementum_url(snap), leaf, False))
         else:
             duplicate_groups: dict[tuple[int | None, int | None], list[TorrentFile]] = {}
@@ -2237,6 +2255,28 @@ class OutputRunner:
                     leaf = self._kodi_fallback_basename(snap, file)
                 playback = self._elementum_url(snap, file)
                 targets.append((file, target_dir, playback, leaf, normalized_tv))
+
+        basename_counts: dict[tuple[str, str], int] = {}
+        for _, target_dir, _, leaf, _ in targets:
+            key = (str(target_dir), leaf.casefold())
+            basename_counts[key] = basename_counts.get(key, 0) + 1
+        resolved_targets: list[tuple[TorrentFile, Path, str, str, bool]] = []
+        for file, target_dir, url, leaf, is_normalized_tv in targets:
+            if basename_counts[(str(target_dir), leaf.casefold())] > 1:
+                # True duplicate episode coordinates already include an ordinal;
+                # this branch handles real filename collisions such as equal stems.
+                if "[file" not in leaf:
+                    base = self.kodi_display_title_by_hash.get(snap.hash) if is_normalized_tv else Path(file.path).stem
+                    if not base:
+                        base = Path(file.path).stem or Path(file.path).name
+                    leaf = bounded_kodi_leaf(
+                        base,
+                        snap.quality_label,
+                        self.kodi_hash_by_torrent.get(snap.hash, snap.hash[:8]),
+                        file_ordinal=file.order + 1,
+                    )
+            resolved_targets.append((file, target_dir, url, leaf, is_normalized_tv))
+        targets = resolved_targets
 
         for file, target_dir, url, leaf, is_normalized_tv in targets:
             self._assert_no_symlink(target_dir)
