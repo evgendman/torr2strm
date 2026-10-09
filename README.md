@@ -1,4 +1,4 @@
-# torr2strm v1.4.3
+# torr2strm v1.4.4
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -80,13 +80,13 @@ Kodi's normalized tree is separate from Jellyfin's existing tree. Identified rel
 
 ## JacRed and media information
 
-JacRed is optional enrichment, not the source of truth. TorrServer remains authoritative for the torrent list, hash and FileStats. `torr2strm` queries the public JacRed service directly at `https://jac.red/torznab/api`; it does not depend on Prowlarr or a local indexer. The optional `api_key` is sent using Torznab's `apikey` query parameter only if you have a key for the JacRed API.
+JacRed is optional enrichment, not the source of truth. TorrServer remains authoritative for the torrent list, hash and FileStats. `torr2strm` queries JacRed's v2 JSON API directly at `https://jac.red/api/v2.0/indexers/all/results`. This is the method used by the existing `jacred2prowlarr` client; it does not depend on Prowlarr or Torznab XML. The API request uses `q`, `category` (`movie_` or `tv_` when known), `limit`, and `year` when it can be extracted from the title.
 
 ### How a JacRed match is found
 
-1. torr2strm prepares up to six distinct candidate title queries from the TorrServer title, the normalized series title for TV, and available metadata title fields.
-2. It queries JacRed's native `GET /torznab/api` endpoint using Torznab's XML/RSS protocol (`t=tvsearch`, `t=movie`, or `t=search`; `q` carries the text query). The response's `infohash` extended attribute or BTIH in the magnet URL is checked against TorrServer's full hash. No Prowlarr indexer ID is needed.
-3. Search results are not accepted merely because their titles look similar. The result's `infoHash`, `guid`, or BTIH extracted from its magnet/download URL must equal the TorrServer hash.
+1. torr2strm prepares up to four title candidates from the TorrServer title, localized/original-title variants, and available metadata title fields; it avoids searching standalone years and codec/audio fragments.
+2. It queries JacRed's `GET /api/v2.0/indexers/all/results` endpoint as JSON. The result list is in the `Results` array; native fields such as `Title`, `MagnetUri`, `Category`, and `info` are normalized for the importer.
+3. Search results are not accepted merely because their titles look similar. A valid native hash field or the BTIH extracted from `MagnetUri` must equal the TorrServer hash; a details-page URL is not a hash.
 4. If several exact matches exist, the implementation prefers the result with usable ffprobe data, then a magnet link, then recognizable category information. All enrichment fields are taken from that same selected result.
 
 An exact JacRed result can provide:
@@ -193,7 +193,7 @@ Main sections:
 - `[outputs.jellyfin]` and `[outputs.kodi]`: output roots, independent manifests and enable flags. Only Jellyfin can enable reverse deletion.
 - `[sync]`: eligible video extensions and the fallback season for TV files whose season cannot be inferred.
 - `[quality]`: legacy timeout/retry settings; ignored in v1.4.1 and removable.
-- `[jacred]`: public JacRed Torznab base URL, optional JacRed API key, result limit, timeout and retries.
+- `[jacred]`: public JacRed v2 JSON API base URL, result limit, timeout and retries. No Prowlarr indexer ID or API key is required.
 - `[logging]`: log verbosity.
 
 Command-line parameters:
@@ -204,18 +204,18 @@ Command-line parameters:
 --version                  Print the installed version and exit
 --jacred URL               Override the configured JacRed base URL for this run
 --no-jacred                Disable JacRed for this run
---jacred-api-key KEY       Override the JacRed API key for this run
---jacred-indexer-id ID     Override the JacRed indexer ID; 0 searches all indexers
+--jacred-api-key KEY       Deprecated compatibility option; ignored by the public v2 API client
+--jacred-indexer-id ID     Deprecated compatibility option; ignored by the public v2 API client
 --jacred-limit N           Override JacRed result limit (1–1000)
 ```
 
-`--jacred` and `--no-jacred` are mutually exclusive. The default URL is `https://jac.red`; set it to empty to disable JacRed. `indexer_id` and `--jacred-indexer-id` are legacy Prowlarr settings, ignored by direct public Torznab search.
+`--jacred` and `--no-jacred` are mutually exclusive. The default URL is `https://jac.red`; set it to empty to disable JacRed. `api_key`, `indexer_id`, `--jacred-api-key`, and `--jacred-indexer-id` are legacy compatibility settings and are ignored by the direct v2 JSON client.
 
 Example:
 
 ```bash
 sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-run
-sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred https://jac.red --jacred-limit 100 --dry-run
+sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred https://jac.red --jacred-limit 1000 --dry-run
 ```
 
 ## Service behavior
