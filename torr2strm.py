@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.2 - TorrServer -> multiple STRM materialized trees.
+"""torr2strm 1.4.3 - TorrServer -> multiple STRM materialized trees.
 
 Key rules:
 - TorrServer is the source of truth.
@@ -14,7 +14,8 @@ Key rules:
 - Existing valid NFOs are reusable media-info cache across output trees.
 - Only Jellyfin output can have reverse deletion of the TorrServer torrent; Kodi output is read-only.
 - Reverse deletion uses TorrServer action=rem only; never action=drop.
-- Recoverable per-torrent probe failures do not make the service exit non-zero.
+- JacRed enrichment uses the public Torznab XML API directly; no Prowlarr dependency is required.
+- Recoverable per-torrent source errors do not make the service exit non-zero.
 """
 from __future__ import annotations
 
@@ -35,10 +36,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import tomllib
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.2"
+VERSION = "1.4.3"
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
@@ -1423,13 +1425,96 @@ def provider_ids_from_mapping(mapping: dict[str, Any] | None) -> dict[str, str]:
     return result
 
 
+def parse_torznab_results(raw: bytes | str) -> list[dict[str, Any]]:
+    """Parse JacRed's native Torznab RSS/XML response into normalized result maps."""
+    try:
+        root = ET.fromstring(raw)
+    except (ET.ParseError, TypeError, ValueError) as exc:
+        raise RuntimeError(f"invalid XML from JacRed Torznab endpoint: {exc}") from exc
+
+    def local_name(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1].lower()
+
+    # Torznab represents errors as <error code="..." description="..."/>.
+    for node in root.iter():
+        if local_name(node.tag) == "error":
+            code = str(node.get("code") or "unknown")
+            description = str(node.get("description") or (node.text or "")).strip()
+            raise RuntimeError(f"JacRed Torznab error code={code}: {description or 'unspecified error'}")
+
+    def child_text(item: ET.Element, name: str) -> str:
+        for child in list(item):
+            if local_name(child.tag) == name.lower():
+                return (child.text or "").strip()
+        return ""
+
+    results: list[dict[str, Any]] = []
+    for item in root.iter():
+        if local_name(item.tag) != "item":
+            continue
+
+        attrs: dict[str, str] = {}
+        for node in item.iter():
+            if local_name(node.tag) != "attr":
+                continue
+            name = str(node.get("name") or "").strip()
+            value = str(node.get("value") or "").strip()
+            if name and value:
+                attrs[norm_key(name)] = value
+
+        title = child_text(item, "title")
+        guid = child_text(item, "guid")
+        link = child_text(item, "link")
+        category = attrs.get("category") or child_text(item, "category")
+        enclosure_url = ""
+        for child in list(item):
+            if local_name(child.tag) == "enclosure":
+                enclosure_url = str(child.get("url") or "").strip()
+                if enclosure_url:
+                    break
+
+        magnet = attrs.get("magneturl", "")
+        if not magnet:
+            for candidate in (link, enclosure_url):
+                if candidate.lower().startswith("magnet:?"):
+                    magnet = candidate
+                    break
+
+        infohash = attrs.get("infohash", "")
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", infohash):
+            infohash = guid.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", guid) else ""
+
+        result: dict[str, Any] = {
+            "title": title,
+            "guid": guid,
+            "infoHash": infohash,
+            "magnetUrl": magnet,
+            "downloadUrl": enclosure_url or link,
+            "link": link,
+            "category": category,
+            "categories": [category] if category else [],
+            "year": attrs.get("year", ""),
+            "size": attrs.get("size", "") or child_text(item, "size"),
+            "seeders": attrs.get("seeders", ""),
+            "tracker": attrs.get("site", "") or child_text(item, "jackettindexer"),
+        }
+        # Carry all extended Torznab attributes forward: a later resolver can
+        # use quality/resolution fields if the public API starts exposing them.
+        for name, value in attrs.items():
+            result.setdefault(name, value)
+        results.append(result)
+    return results
+
+
 class JacRedClient:
     """Optional metadata provider using JacRed's Prowlarr Search Feed."""
 
     def __init__(self, cfg: dict[str, Any]):
         self.base_url = str(cfg.get("url", "")).strip().rstrip("/")
         self.api_key = str(cfg.get("api_key", "")).strip()
-        self.indexer_id = int(cfg.get("indexer_id", 0))
+        self.indexer_id = int(cfg.get("indexer_id", 0))  # Legacy Prowlarr-only setting; unused by native Torznab.
+        if self.indexer_id > 0:
+            LOG.warning("JACRED_INDEXER_ID_IGNORED value=%s; direct public JacRed Torznab searches all trackers", self.indexer_id)
         self.limit = int(cfg.get("limit", 100))
         self.timeout_sec = float(cfg.get("timeout_sec", 10))
         self.retries = int(cfg.get("retries", 0))
@@ -1440,32 +1525,40 @@ class JacRedClient:
         return bool(self.base_url)
 
     def _get_json(self, query: str, search_type: str) -> list[dict[str, Any]]:
-        key = (query, search_type, self.indexer_id, self.limit)
+        key = (query, search_type, 0, self.limit)
         if key in self._cache:
             return self._cache[key]
+        action = search_type.lower().strip()
+        if action not in {"search", "tvsearch", "movie", "moviesearch", "tv"}:
+            action = "search"
+        if action == "moviesearch":
+            action = "movie"
+        elif action == "tv":
+            action = "tvsearch"
         params: list[tuple[str, str]] = [
-            ("query", query),
-            ("type", search_type),
+            ("t", action),
+            ("q", query),
             ("limit", str(self.limit)),
+            ("extended", "1"),
         ]
-        if self.indexer_id > 0:
-            params.append(("indexerIds", str(self.indexer_id)))
-        url = f"{self.base_url}/api/v1/search?{urllib.parse.urlencode(params)}"
-        headers = {"Accept": "application/json", "User-Agent": f"torr2strm/{VERSION}"}
         if self.api_key:
-            headers["X-Api-Key"] = self.api_key
+            # Native Torznab authenticates through the standard apikey query parameter.
+            params.append(("apikey", self.api_key))
+        endpoint = self.base_url if self.base_url.lower().endswith("/torznab/api") else f"{self.base_url}/torznab/api"
+        url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+        headers = {
+            "Accept": "application/xml, application/rss+xml, text/xml",
+            "User-Agent": f"torr2strm/{VERSION}",
+        }
         last_error: Exception | None = None
         for attempt in range(1, self.retries + 2):
             req = urllib.request.Request(url, method="GET", headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
                     raw = resp.read()
-                data = json.loads(raw.decode("utf-8")) if raw else []
-                if not isinstance(data, list):
-                    raise RuntimeError("JacRed /api/v1/search response is not an array")
-                results = [item for item in data if isinstance(item, dict)]
+                results = parse_torznab_results(raw) if raw else []
                 self._cache[key] = results
-                LOG.info("JACRED_SEARCH query=%r type=%s results=%d", query, search_type, len(results))
+                LOG.info("JACRED_SEARCH query=%r type=%s endpoint=%s results=%d", query, action, endpoint, len(results))
                 return results
             except urllib.error.HTTPError as exc:
                 text = exc.read().decode("utf-8", "replace")
@@ -1474,13 +1567,11 @@ class JacRedClient:
                 last_error = RuntimeError(str(exc.reason))
             except TimeoutError as exc:
                 last_error = RuntimeError(str(exc))
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                last_error = RuntimeError(f"invalid JSON: {exc}")
             except Exception as exc:
                 last_error = exc
             if attempt <= self.retries:
                 time.sleep(0.5)
-        LOG.warning("JACRED_SEARCH_FAILED query=%r type=%s error=%s", query, search_type, last_error)
+        LOG.warning("JACRED_SEARCH_FAILED query=%r type=%s endpoint=%s error=%s", query, action, endpoint, last_error)
         self._cache[key] = []
         return []
 
@@ -1532,18 +1623,24 @@ class JacRedClient:
                         value = mapping.get(key)
                         if value not in (None, ""):
                             hash_candidates.append(value)
-                result_hash = ""
+                target_found = False
                 for candidate in hash_candidates:
                     candidate_text = urllib.parse.unquote(str(candidate)).strip()
+                    candidates_for_value: list[str] = []
                     if re.fullmatch(r"[0-9a-fA-F]{40}", candidate_text):
-                        result_hash = candidate_text.lower()
+                        candidates_for_value.append(candidate_text.lower())
                     elif re.fullmatch(r"[A-Za-z2-7]{32}", candidate_text, flags=re.IGNORECASE):
-                        result_hash = extract_btih(f"urn:btih:{candidate_text}") or ""
+                        decoded = extract_btih(f"urn:btih:{candidate_text}")
+                        if decoded:
+                            candidates_for_value.append(decoded)
                     else:
-                        result_hash = extract_btih(candidate_text) or ""
-                    if result_hash:
+                        decoded = extract_btih(candidate_text)
+                        if decoded:
+                            candidates_for_value.append(decoded)
+                    if target in candidates_for_value:
+                        target_found = True
                         break
-                if result_hash == target:
+                if target_found:
                     exact.append((result, query))
 
         if not exact:
