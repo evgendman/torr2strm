@@ -416,7 +416,10 @@ def media_logical_identity(snap: "TorrentSnapshot") -> str | None:
             value = metadata_value(metadata, *keys)
             if value not in (None, ""):
                 _put_provider_id(ids, kind, value)
-    ids.update({k: v for k, v in provider_ids(metadata, snap.title).items() if k not in ids})
+    # If a series-scoped ID was supplied, do not let a generic provider ID
+    # override which ID defines this series. Generic IDs are only a fallback.
+    if not ids:
+        ids.update(provider_ids(metadata, snap.title))
     for kind in ("tmdb", "tvdb", "imdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"):
         value = ids.get(kind)
         if value:
