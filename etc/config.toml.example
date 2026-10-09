@@ -1,4 +1,4 @@
-# torr2strm v1.4.0
+# torr2strm v1.4.1
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
@@ -40,17 +40,13 @@ video_extensions = [
   ".asf", ".asx", ".f4v", ".m2v", ".m2t", ".tp", ".ty", ".wtv"
 ]
 
-[quality]
-# torr2strm calls TorrServer GET /ffp/{hash}/{file_id}; it does not launch ffprobe itself.
-# The primary eligible video determines the torrent root and display quality label.
-# Fallback: structured quality fields, explicit title markers, then unknown (1080p root, no label).
-timeout_sec = 12
-retries = 0
+
 
 [jacred]
 # The URL is a service base URL, not a release-page URL; code appends /api/v1/search.
 # A candidate result is accepted only when its BTIH/infoHash exactly matches TorrServer.
-# The exact result may supply category, ffprobe JSON, magnet URL and provider IDs.
+# The exact result may supply category, already-existing ffprobe JSON, magnet URL and provider IDs.
+# torr2strm never calls TorrServer /ffp/ or runs ffprobe itself.
 # The public jac.red instance used in our tests; an empty URL disables enrichment.
 url = "https://jac.red"
 api_key = ""
