@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.2
+
+- Fixed exact-hash matching when a JacRed/Prowlarr result has a non-empty result-page URL in `guid` and the actual BTIH is present in `magnetUrl`/`downloadUrl`.
+- Hash candidates are now parsed independently; an invalid or non-hash `guid` no longer prevents checking a later valid hash/magnet field.
+- Added regression tests for a page URL plus matching magnet hash, and for a direct hexadecimal `infoHash`.
+
 ## 1.4.1
 
 - Removed all TorrServer `/ffp/{hash}/{file_id}` requests and local ffprobe execution from quality classification.
