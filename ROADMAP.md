@@ -275,7 +275,7 @@ The work is complete when the independent Kodi tree groups identified releases b
 - [x] Phase 3 — Logical identity and Kodi path planning implemented
 - [x] Phase 4 — Independent Kodi tree builder implemented
 - [x] Phase 5 — Manifest reconciliation and clean-rebuild path implemented
-- [~] Phase 6 — 29 regression tests authored/updated; execution result not confirmed
+- [x] Phase 6 — 29 regression tests pass in GitHub Actions (Python 3.13)
 - [ ] Phase 7 — Real-player validation on the mini-PC and release tagging
 
-This status records the implementation candidate, not a verified production release. Do not tag or treat v1.4.0 as production-approved until the test suite and real Kodi/Jellyfin checks pass.
+This status records a CI-verified implementation candidate, not a production-approved release. Do not tag or treat v1.4.0 as production-approved until the new tree has been checked in Kodi and Jellyfin on the mini-PC.
