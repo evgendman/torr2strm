@@ -378,6 +378,8 @@ def test_provider_ids_and_base_metadata_are_written_to_nfo():
         tvshow_text = tvshow.read_text(encoding="utf-8")
         assert "<title>" not in tvshow_text
         assert "<premiered>" not in tvshow_text
+        assert "<width>1920</width>" in tvshow_text
+        assert "<height>1080</height>" in tvshow_text
         assert nfo_format_version(tvshow_text) == 3
         assert tvshow_text.rstrip().endswith("https://www.themoviedb.org/tv/1124")
         episode_text = nfo.read_text(encoding="utf-8")
@@ -562,7 +564,10 @@ def test_kodi_groups_identified_series_by_id_and_keeps_releases_separate():
         assert len({p.name for p in strms}) == 2
         assert any("720p [11111111]" in p.name for p in strms)
         assert any("1080p [22222222]" in p.name for p in strms)
-        assert (kr / "tv" / "1080p" / "Canonical Series (2024)" / "tvshow.nfo").is_file()
+        tvshow_nfo = kr / "tv" / "1080p" / "Canonical Series (2024)" / "tvshow.nfo"
+        assert tvshow_nfo.is_file()
+        assert "<width>1280</width>" in tvshow_nfo.read_text(encoding="utf-8")
+        assert "<title>" not in tvshow_nfo.read_text(encoding="utf-8")
         assert not list(kr.rglob("Different.Release.Name*"))
         assert not list(kr.rglob("Other.Release.Name*"))
 
