@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.3 - TorrServer -> multiple STRM materialized trees.
+"""torr2strm 1.4.4 - TorrServer -> multiple STRM materialized trees.
 
 Key rules:
 - TorrServer is the source of truth.
@@ -14,7 +14,7 @@ Key rules:
 - Existing valid NFOs are reusable media-info cache across output trees.
 - Only Jellyfin output can have reverse deletion of the TorrServer torrent; Kodi output is read-only.
 - Reverse deletion uses TorrServer action=rem only; never action=drop.
-- JacRed enrichment uses the public Torznab XML API directly; no Prowlarr dependency is required.
+- JacRed enrichment uses the public JacRed v2 JSON API directly; no Prowlarr dependency is required.
 - Recoverable per-torrent source errors do not make the service exit non-zero.
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.3"
+VERSION = "1.4.4"
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
@@ -1355,7 +1355,7 @@ class JacRedMatch:
 
 
 def category_from_jacred_result(result: dict[str, Any]) -> str | None:
-    """Map an exact JacRed/Prowlarr result to movie/tv/_uncategorized without guessing by title."""
+    """Map an exact JacRed v2 result to movie/tv/_uncategorized without guessing by title."""
     values: list[Any] = []
     for key in ("category", "categories", "cat", "Category"):
         if key in result:
@@ -1425,89 +1425,80 @@ def provider_ids_from_mapping(mapping: dict[str, Any] | None) -> dict[str, str]:
     return result
 
 
-def parse_torznab_results(raw: bytes | str) -> list[dict[str, Any]]:
-    """Parse JacRed's native Torznab RSS/XML response into normalized result maps."""
-    try:
-        root = ET.fromstring(raw)
-    except (ET.ParseError, TypeError, ValueError) as exc:
-        raise RuntimeError(f"invalid XML from JacRed Torznab endpoint: {exc}") from exc
-
-    def local_name(tag: str) -> str:
-        return tag.rsplit("}", 1)[-1].lower()
-
-    # Torznab represents errors as <error code="..." description="..."/>.
-    for node in root.iter():
-        if local_name(node.tag) == "error":
-            code = str(node.get("code") or "unknown")
-            description = str(node.get("description") or (node.text or "")).strip()
-            raise RuntimeError(f"JacRed Torznab error code={code}: {description or 'unspecified error'}")
-
-    def child_text(item: ET.Element, name: str) -> str:
-        for child in list(item):
-            if local_name(child.tag) == name.lower():
-                return (child.text or "").strip()
-        return ""
+def normalize_jacred_v2_results(payload: Any) -> list[dict[str, Any]]:
+    """Normalize JacRed v2 JSON items for the rest of the enrichment pipeline."""
+    if isinstance(payload, list):
+        raw_results = payload
+    elif isinstance(payload, dict):
+        raw_results = get_field(payload, "Results", "results", default=[])
+        if raw_results is None:
+            raw_results = []
+    else:
+        raise RuntimeError("JacRed v2 response must be an object with a Results array")
+    if not isinstance(raw_results, list):
+        raise RuntimeError("JacRed v2 response field Results is not an array")
 
     results: list[dict[str, Any]] = []
-    for item in root.iter():
-        if local_name(item.tag) != "item":
+    for raw in raw_results:
+        if not isinstance(raw, dict):
             continue
+        item = dict(raw)
+        info = get_field(item, "info", "Info", default={})
+        info = info if isinstance(info, dict) else {}
 
-        attrs: dict[str, str] = {}
-        for node in item.iter():
-            if local_name(node.tag) != "attr":
-                continue
-            name = str(node.get("name") or "").strip()
-            value = str(node.get("value") or "").strip()
-            if name and value:
-                attrs[norm_key(name)] = value
+        title = str(get_field(item, "Title", "title", default="") or "").strip()
+        details = str(get_field(item, "Details", "details", default="") or "").strip()
+        magnet_value = get_field(item, "MagnetUri", "magnetUrl", "magnet", default="")
+        magnet = extract_magnet(magnet_value) or ""
+        categories = get_field(item, "Category", "categories", "category", default=[])
+        if not isinstance(categories, list):
+            categories = [categories] if categories not in (None, "") else []
 
-        title = child_text(item, "title")
-        guid = child_text(item, "guid")
-        link = child_text(item, "link")
-        category = attrs.get("category") or child_text(item, "category")
-        enclosure_url = ""
-        for child in list(item):
-            if local_name(child.tag) == "enclosure":
-                enclosure_url = str(child.get("url") or "").strip()
-                if enclosure_url:
-                    break
+        raw_hash = get_field(item, "infoHash", "InfoHash", "Hash", "hash", "btih", default="")
+        info_hash = ""
+        raw_hash_text = urllib.parse.unquote(str(raw_hash or "")).strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", raw_hash_text):
+            info_hash = raw_hash_text.lower()
+        elif raw_hash_text:
+            info_hash = extract_btih(raw_hash_text) or ""
+        if not info_hash and magnet:
+            info_hash = extract_btih(magnet) or ""
 
-        magnet = attrs.get("magneturl", "")
-        if not magnet:
-            for candidate in (link, enclosure_url):
-                if candidate.lower().startswith("magnet:?"):
-                    magnet = candidate
-                    break
+        year = get_field(item, "year", "Year", default=None)
+        if not year:
+            year = get_field(info, "relased", "released", "year", "releaseYear", default=None)
+        if not year:
+            match_year = re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", title)
+            year = match_year.group(0) if match_year else ""
 
-        infohash = attrs.get("infohash", "")
-        if not re.fullmatch(r"[0-9a-fA-F]{40}", infohash):
-            infohash = guid.lower() if re.fullmatch(r"[0-9a-fA-F]{40}", guid) else ""
-
-        result: dict[str, Any] = {
+        normalized = dict(item)
+        normalized.update({
             "title": title,
-            "guid": guid,
-            "infoHash": infohash,
+            "originaltitle": get_field(info, "originalname", "originalName", default=""),
+            "guid": details or str(get_field(item, "guid", "Guid", default="") or ""),
+            "infoHash": info_hash,
+            "hash": info_hash,
             "magnetUrl": magnet,
-            "downloadUrl": enclosure_url or link,
-            "link": link,
-            "category": category,
-            "categories": [category] if category else [],
-            "year": attrs.get("year", ""),
-            "size": attrs.get("size", "") or child_text(item, "size"),
-            "seeders": attrs.get("seeders", ""),
-            "tracker": attrs.get("site", "") or child_text(item, "jackettindexer"),
-        }
-        # Carry all extended Torznab attributes forward: a later resolver can
-        # use quality/resolution fields if the public API starts exposing them.
-        for name, value in attrs.items():
-            result.setdefault(name, value)
-        results.append(result)
+            "downloadUrl": magnet,
+            "detailsUrl": details,
+            "category": categories,
+            "categories": categories,
+            "year": str(year or ""),
+            "seeders": get_field(item, "Seeders", "seeders", default=0),
+            "peers": get_field(item, "Peers", "peers", default=0),
+            "size": get_field(item, "Size", "size", default=get_field(info, "sizeName", "size", default="")),
+        })
+        if "ffprobe" not in normalized:
+            present_probe = get_field(item, "ffprobe", "ffProbe", "mediaInfo", default=None)
+            if present_probe is not None:
+                normalized["ffprobe"] = present_probe
+        # Keep nested metadata intact for quality and provider-ID resolution.
+        results.append(normalized)
     return results
 
 
 class JacRedClient:
-    """Optional metadata provider using JacRed's public Torznab XML endpoint."""
+    """Optional metadata provider using JacRed v2 JSON API directly."""
 
     def __init__(self, cfg: dict[str, Any]):
         self.base_url = str(cfg.get("url", "")).strip().rstrip("/")
@@ -1519,6 +1510,7 @@ class JacRedClient:
         self.timeout_sec = float(cfg.get("timeout_sec", 10))
         self.retries = int(cfg.get("retries", 0))
         self._cache: dict[tuple[str, str, int, int], list[dict[str, Any]]] = {}
+        self._last_upstream_finished = 0.0
 
     @property
     def enabled(self) -> bool:
@@ -1528,79 +1520,99 @@ class JacRedClient:
         key = (query, search_type, 0, self.limit)
         if key in self._cache:
             return self._cache[key]
-        action = search_type.lower().strip()
-        if action not in {"search", "tvsearch", "movie", "moviesearch", "tv"}:
-            action = "search"
-        if action == "moviesearch":
-            action = "movie"
-        elif action == "tv":
-            action = "tvsearch"
+
         params: list[tuple[str, str]] = [
-            ("t", action),
             ("q", query),
             ("limit", str(self.limit)),
-            ("extended", "1"),
         ]
-        if self.api_key:
-            # Native Torznab authenticates through the standard apikey query parameter.
-            params.append(("apikey", self.api_key))
-        endpoint = self.base_url if self.base_url.lower().endswith("/torznab/api") else f"{self.base_url}/torznab/api"
+        normalized_type = search_type.lower().strip()
+        if normalized_type in {"movie", "moviesearch"}:
+            params.append(("category", "movie_"))
+        elif normalized_type in {"tvsearch", "tv"}:
+            params.append(("category", "tv_"))
+        year = re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", query)
+        if year:
+            params.append(("year", year.group(0)))
+
+        endpoint = self.base_url
+        if not endpoint.lower().endswith("/api/v2.0/indexers/all/results"):
+            endpoint = f"{endpoint}/api/v2.0/indexers/all/results"
         url = f"{endpoint}?{urllib.parse.urlencode(params)}"
+        # Match the headers used by the established jacred2prowlarr source client.
         headers = {
-            "Accept": "application/xml, application/rss+xml, text/xml",
-            "User-Agent": f"torr2strm/{VERSION}",
+            "Accept": "application/json",
+            "User-Agent": "JacRed-V2-Torznab-Adapter/2.2.10",
         }
         last_error: Exception | None = None
         for attempt in range(1, self.retries + 2):
+            # Keep the one-second minimum interval used by the previous client.
+            wait = 1.0 - (time.monotonic() - self._last_upstream_finished)
+            if wait > 0:
+                time.sleep(wait)
             req = urllib.request.Request(url, method="GET", headers=headers)
             try:
                 with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
                     raw = resp.read()
-                results = parse_torznab_results(raw) if raw else []
+                data = json.loads(raw.decode("utf-8")) if raw else {"Results": []}
+                results = normalize_jacred_v2_results(data)
                 self._cache[key] = results
-                LOG.info("JACRED_SEARCH query=%r type=%s endpoint=%s results=%d", query, action, endpoint, len(results))
+                LOG.info("JACRED_SEARCH query=%r type=%s endpoint=%s results=%d", query, normalized_type, endpoint, len(results))
                 return results
             except urllib.error.HTTPError as exc:
-                text = exc.read().decode("utf-8", "replace")
-                last_error = RuntimeError(f"HTTP {exc.code}: {text[:300]}")
+                body = exc.read().decode("utf-8", "replace")
+                last_error = RuntimeError(f"HTTP {exc.code}: {body[:300]}")
             except urllib.error.URLError as exc:
                 last_error = RuntimeError(str(exc.reason))
             except TimeoutError as exc:
                 last_error = RuntimeError(str(exc))
             except Exception as exc:
                 last_error = exc
+            finally:
+                self._last_upstream_finished = time.monotonic()
             if attempt <= self.retries:
                 time.sleep(0.5)
-        LOG.warning("JACRED_SEARCH_FAILED query=%r type=%s endpoint=%s error=%s", query, action, endpoint, last_error)
+        LOG.warning("JACRED_SEARCH_FAILED query=%r type=%s endpoint=%s error=%s", query, normalized_type, endpoint, last_error)
         self._cache[key] = []
         return []
 
     def _candidate_queries(self, torrent: TorrentSnapshot) -> list[str]:
-        raw_candidates: list[str] = []
-        if torrent.category == "tv":
-            raw_candidates.append(extract_tv_series_name(torrent.title, torrent.files))
-        else:
-            raw_candidates.append(torrent.title)
-        for key in ("name", "originalname", "seriesTitle", "seriesName", "title", "originaltitle", "originalTitle"):
+        primary = (
+            extract_tv_series_name(torrent.title, torrent.files)
+            if torrent.category == "tv"
+            else torrent.title
+        )
+        raw_candidates: list[str] = [primary]
+
+        # JacRed titles often look like "Localized / Original / year / audio...".
+        # Use only the first two title segments as variants, not years or audio/source fragments.
+        title_head = str(primary or "")
+        if " | " in title_head:
+            title_head = title_head.split(" | ", 1)[0].strip()
+        slash_parts = [part.strip() for part in re.split(r"\s+/\s+", title_head)]
+        if len(slash_parts) > 1:
+            raw_candidates.extend(slash_parts[:2])
+
+        for key in ("originalname", "originalName", "name", "seriesTitle", "seriesName",
+                    "title", "originaltitle", "originalTitle"):
             value = get_field(torrent.metadata, key, default=None)
             if isinstance(value, str) and value.strip():
                 raw_candidates.append(value)
-        for value in list(raw_candidates):
-            if " / " in value:
-                raw_candidates.extend(part.strip() for part in value.split(" / "))
-            if " | " in value:
-                raw_candidates.extend(part.strip() for part in value.split(" | ")[:2])
+
         cleaned: list[str] = []
         seen: set[str] = set()
         for value in raw_candidates:
             text = html.unescape(str(value)).strip()
             text = re.sub(r"\s+", " ", text)
             text = text.strip(" !|/\\-_.,")
-            if not text or text in seen:
+            if not text or re.fullmatch(r"(?:19|20)\d{2}", text):
+                continue
+            if re.fullmatch(r"(?i)(?:2160p|1080p|1080i|720p|576p|480p|4k|web-dl|webrip|bdrip|bluray|hevc)", text):
+                continue
+            if text in seen:
                 continue
             seen.add(text)
             cleaned.append(text)
-        return cleaned[:6]
+        return cleaned[:4]
 
     def find_match(self, torrent: TorrentSnapshot) -> JacRedMatch | None:
         if not self.enabled:
@@ -3111,7 +3123,7 @@ def main() -> int:
         )
         jacred = JacRedClient(cfg["jacred"])
         if jacred.enabled:
-            LOG.info("JACRED_ENABLED url=%s limit=%s api_key_configured=%s", jacred.base_url, jacred.limit, bool(jacred.api_key))
+            LOG.info("JACRED_ENABLED url=%s limit=%s", jacred.base_url, jacred.limit)
         else:
             LOG.info("JACRED_DISABLED")
         return SyncCoordinator(cfg, client, jacred, dry_run=args.dry_run).run()
