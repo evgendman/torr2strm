@@ -2,6 +2,8 @@
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
+Development plan: [ROADMAP.md](ROADMAP.md).
+
 TorrServer is the source of truth. The service reads TorrServer FileStats, resolves category and real media information, then materializes independent output trees.
 
 ## Output model
