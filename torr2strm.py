@@ -388,7 +388,7 @@ def quality_label_from_metadata(metadata: dict[str, Any] | None) -> str | None:
 def quality_root_from_label(label: str | None) -> str:
     if not label:
         return "1080p"
-    match = re.search(r"(?<!\d)(4320|2160|1440|4k|uhd)(?!\d)", label.lower())
+    match = re.search(r"(?<!\d)(4320|2160|4k|uhd)(?!\d)", label.lower())
     return "4K" if match else "1080p"
 
 
@@ -2046,10 +2046,13 @@ class OutputRunner:
             combination_url=combination_url,
         )
 
-    def _tvshow_nfo_content(self, snap: TorrentSnapshot) -> str:
+    def _tvshow_nfo_content(self, snap: TorrentSnapshot, logical_identity: str | None = None) -> str:
         import xml.etree.ElementTree as ET
         root = ET.Element("tvshow")
         ids = provider_ids_for_snapshot(snap)
+        if logical_identity and ":" in logical_identity:
+            kind, value = logical_identity.split(":", 1)
+            ids = {kind: value}
         default_type = "tmdb" if "tmdb" in ids else "imdb" if "imdb" in ids else "tvdb" if "tvdb" in ids else next(iter(ids), None)
         for kind, value in ids.items():
             if kind in {"tmdb", "imdb", "tvdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"}:
@@ -2071,6 +2074,7 @@ class OutputRunner:
         self.kodi_dirname_by_hash: dict[str, str] = {}
         self.kodi_display_title_by_hash: dict[str, str] = {}
         self.kodi_identity_by_hash: dict[str, str | None] = {}
+        self.kodi_series_canonical_ids: dict[str, dict[str, str]] = {}
         self.kodi_hash_by_torrent = {h: h[:8] for h in snapshots}
         by_prefix: dict[str, list[str]] = {}
         for h in snapshots:
@@ -2121,6 +2125,12 @@ class OutputRunner:
                 component = sanitize_component(f"{component} [{kind}-{value}]")
             for _, _, _, h in grouped[key]:
                 self.kodi_dirname_by_hash[h] = component
+            # A shared tvshow.nfo must be stable across all releases. Store only
+            # the canonical logical provider ID selected for this series rather
+            # than whichever episode torrent happens to sync last.
+            if category == "tv":
+                kind, value = identity.split(":", 1)
+                self.kodi_series_canonical_ids[identity] = {kind: value}
 
         # Add a short hash to an unidentified release directory only if another
         # current torrent would otherwise claim the same directory.
@@ -2406,7 +2416,13 @@ class OutputRunner:
         if snap.category == "tv" and provider_ids_for_snapshot(snap):
             tvshow_path = safe_join(torrent_dir, "tvshow.nfo")
             tvshow_rel = tvshow_path.relative_to(self.root).as_posix()
-            self._write_nfo(tvshow_path, self._tvshow_nfo_content(snap), snap.hash, snap.title, tvshow_rel)
+            self._write_nfo(
+                tvshow_path,
+                self._tvshow_nfo_content(snap, identity),
+                snap.hash,
+                snap.title,
+                tvshow_rel,
+            )
             tvshow_nfo_rel = tvshow_rel
         else:
             tvshow_nfo_rel = None
