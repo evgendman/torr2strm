@@ -2,55 +2,102 @@
 
 ## Source of truth and processing path
 
-TorrServer is the source of truth for torrent membership, info hash and FileStats. A synchronization pass enumerates TorrServer, prepares a stable snapshot of each torrent and its files, optionally enriches that snapshot through JacRed, resolves technical stream information and reconciles independent output trees.
+TorrServer is the source of truth for torrent membership, info hash and FileStats. A synchronization pass loads the torrent and its files, optionally enriches with an exact-hash JacRed result, resolves per-file media information, determines one torrent-level quality root/label from the primary eligible video, then reconciles independent Jellyfin and Kodi/Elementum projections.
 
 ```text
 TorrServer torrent list + FileStats
         ↓
 optional JacRed search + exact BTIH/infoHash validation
         ↓
-resolve category and provider IDs
+resolve category and trustworthy provider IDs
         ↓
-reuse valid NFO → usable ffprobe payload from exact JacRed match → TorrServer /ffp/
+reusable NFO → exact JacRed ffprobe → TorrServer /ffp/ for primary file
+        ↓ if primary ffprobe unavailable
+structured quality field → explicit release-title quality markers → unknown
         ↓
-classify primary video as 4K or 1080p
+quality_root (4K / 1080p) + quality_label (480p / 720p / 1080p / 2160p HDR / ...)
         ↓
-materialize Jellyfin and Kodi/Elementum trees independently
+per-file ffprobe as needed for each file's own NFO
+        ↓
+Jellyfin output (existing path/grouping behavior) + normalized Kodi output
 ```
 
-## JacRed matching
+## JacRed matching and identity
 
-JacRed is optional enrichment, never a substitute for TorrServer's torrent inventory. torr2strm searches `/api/v1/search` using up to six deduplicated candidates derived from torrent/series title and known title metadata. Search type is `tvsearch` for TV, `movie` for movies and generic `search` when the TorrServer category is unknown.
+JacRed is optional enrichment, never a substitute for TorrServer's torrent inventory. A candidate is accepted only when its `infoHash`, `guid` or BTIH extracted from its magnet/download URL exactly matches the TorrServer hash. Approximate title similarity alone is not sufficient.
 
-A result is accepted only if its `infoHash`, `guid` or BTIH extracted from its magnet/download URL exactly matches the TorrServer hash. Approximate title similarity alone is not sufficient. When more than one exact result is available, the code ranks results by usable ffprobe payload, magnet availability and recognized category, and keeps enrichment data from the selected result together.
+Provider IDs are used to establish logical movie/series identity. For Kodi, identified releases with the same logical identity share one readable directory per quality root. Unknown series identity does not cause title-based fuzzy merging: the release title names the directory and the torrent's inner file hierarchy is preserved. Missing IDs, season numbers and episode numbers are never fabricated.
 
-## Category resolution
+## Category and output roots
+
+Category resolution remains unchanged:
 
 1. A non-empty TorrServer category equal to `movie` or `tv` after normalization wins.
-2. JacRed category may be used only when the TorrServer category field is blank and the result hash is an exact match.
-3. If the category remains unknown, use `_uncategorized`.
+2. JacRed category may be used only when TorrServer category is genuinely blank and the hash match is exact.
+3. If still unknown, use `_uncategorized`; anime is not silently treated as TV.
 
-Anime stays `_uncategorized`; it is never forced into TV. A non-empty but unsupported TorrServer category is treated as `_uncategorized` and is not overridden by JacRed. The code does not guess category from a title string.
+The quality root has only two values:
 
-Category determines the first directory level (`movie`, `tv` or `_uncategorized`). The quality directory is a separate decision (`4K` or `1080p`).
+- `4K` when the primary eligible video's `max(width, height) >= 2160`;
+- `1080p` for everything else, including unknown quality.
 
-## Media information and quality
+The primary eligible video is the largest playable video file, with path as deterministic tie-breaker. One root and one display quality label are used for the whole torrent. We do not call ffprobe separately on each episode just to classify it, but retain per-file ffprobe requests when needed to write truthful stream data to the matching NFO.
 
-Media-info priority:
+## Quality-label fallback
 
-1. Usable existing NFO from either output tree.
-2. Exact JacRed hash match with a usable ffprobe stream payload.
-3. TorrServer's `GET /ffp/{hash}/{file_id}` endpoint.
+The root and display label are independent. A 720p or 480p item may live under `1080p`, and a release with unknown quality also lives under `1080p` but receives no quality suffix.
 
-torr2strm does not execute a local ffprobe process. TorrServer must have a working ffprobe binary and provide the `/ffp/...` endpoint. `GET /ffp/status` is the documented availability check. The `[quality].timeout_sec` and `[quality].retries` settings control TorrServer ffprobe requests.
+Resolution/display label priority:
 
-Quality comes from the primary eligible video's real dimensions, not release-name tokens:
+1. Real primary-file ffprobe stream dimensions and HDR/DV indicators (or valid cached NFO stream details for that exact file).
+2. Structured quality/resolution fields from TorrServer metadata or a hash-exact JacRed match.
+3. Explicit quality markers in the torrent title.
+4. Unknown.
 
-- `max(width, height) >= 2160` → `4K`;
-- all smaller dimensions → `1080p`.
+Explicit labels are normalized (for example, `480p`, `720p`, `1080p`, `1080i`, `1440p`, `2160p`, `2160p HDR`, `2160p DV`). Source/codec tokens such as `WEB-DL`, `BluRay`, `HEVC`, or `HD` do not establish resolution by themselves. Unknown label means no quality suffix in the basename, not a claim that the media is 1080p.
 
-A missing/unusable stream payload is not replaced by the words `1080p`, `2160p`, `quality` or `videotype` in a title/JacRed record.
+## Jellyfin output
 
-## Output responsibility
+Jellyfin's current per-torrent directory-building/grouping behavior is the compatibility contract and is not redesigned for the Kodi project. Jellyfin continues to create file-level STRM entries with TorrServer `/play/{hash}/{file_id}` links. Its paths and reverse-delete behavior must be covered by regression tests.
 
-Jellyfin is the authoritative read/write projection. Kodi/Elementum is an independent read-only projection with different STRM URI semantics. Each output has its own root, marker and manifest. Source-torrent removal via reverse deletion is only possible from the Jellyfin output and only when explicitly enabled; `action=drop` is not used.
+Jellyfin is the only authoritative/read-write output. A tracked Jellyfin STRM deletion may remove a source torrent only when reverse deletion is explicitly enabled, through `action=rem`. `action=drop` is forbidden.
+
+## Kodi/Elementum output
+
+Kodi has an independently planned path tree:
+
+- Identified series: `tv/<quality-root>/<Series Name> (<Year if known>)/Season NN/`.
+- Identified movies: `movie/<quality-root>/<Movie Name> (<Year if known>)/`.
+- Unknown TV identity: `tv/<quality-root>/<release title>/<original torrent file hierarchy>/`.
+- Unknown movie/other identity: a torrent-release-title directory, preserving available source layout where individual file items are materialized.
+
+A known series directory has no torrent hash. If genuinely different series IDs collide on the same readable name/year, append the namespaced provider ID only to resolve that collision. Distinct fallback torrents get a short-hash directory suffix only if their title would otherwise collide.
+
+Every Kodi item release remains physically distinct. Its basename includes a readable title/episode coordinate where known, then ` — <quality-label>` if known, then `[<short torrent hash>]` immediately before the extension. Start with 8 hash characters and lengthen only when short-hash strings collide. If two files in one torrent map to the same logical episode, append a file ordinal only to those colliding items.
+
+Playback semantics do not change:
+
+- Movies: one torrent-level Elementum STRM per release, no `oindex`.
+- TV: one STRM per playable file with `oindex` equal to that source file's original zero-based FileStats order.
+- Kodi output is read-only and never removes a TorrServer torrent.
+
+## Manifest and shared-folder reconciliation
+
+Each output has its own root marker and manifest. The manifest is the source of truth mapping each STRM/NFO to full torrent hash, source file path/id/order, and output-relative paths. Filenames and short hashes are display aids, never deletion identities.
+
+Kodi series/season directories may be shared by several torrents. The synchronizer reconciles each torrent's entries independently; it removes only old managed files no longer referenced by any new record and prunes directories only when empty. Removing one torrent cannot delete another release's STRM or a still-used `tvshow.nfo`. Source torrents disappearing from TorrServer are reflected in all enabled outputs on the next sync.
+
+## NFO contract
+
+No human-readable display title/name fields are written to any NFO. This is intentional: Kodi was observed to replace its scraper-localized title with NFO title values after scraping; Jellyfin should obtain localized names by provider ID.
+
+- Movie NFO: trusted IDs, per-file ffprobe stream details, and a Combination NFO scraper URL when a trustworthy TMDb ID is available.
+- `tvshow.nfo`: trusted series IDs and Combination NFO URL; no title and no arbitrary episode stream details.
+- Episode NFO: ordinary episode NFO, trusted IDs, known season/episode coordinates, and stream details from that exact source file; no Combination URL.
+- If ffprobe is unavailable, the synchronizer still creates the STRM and an identity-only NFO. That NFO is not treated as a technical-data cache.
+
+NFO format is v3. It is distinct from software/manifest versions. Current development trees are cleaned and rebuilt; no physical directory-tree migration is performed. If an older NFO is encountered through manifest-based cache reuse, title-like fields are removed during format upgrade.
+
+## Rebuild and safety
+
+For v1.4.0, stop the service and timer, disable Jellyfin reverse deletion while clearing state, empty only the configured Jellyfin and Kodi output roots (including their `.torr2strm` manifests and root markers), then run a fresh sync. Do not remove arbitrary parent directories. `action=drop` is never used. The independent `hotcached` project is out of scope.
