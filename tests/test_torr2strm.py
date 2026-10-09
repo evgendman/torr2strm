@@ -668,7 +668,7 @@ def test_per_file_nfo_details_are_not_replaced_with_primary_quality_stream():
         text = second.read_text(encoding="utf-8")
         assert "<width>1280</width>" in text
         assert "<height>720</height>" in text
-        assert "<title>" not in text
+        assert_no_display_title_fields(text)
 
 
 def test_known_series_files_without_episode_coordinates_do_not_get_duplicate_file_suffix():
