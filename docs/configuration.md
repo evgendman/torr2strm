@@ -11,7 +11,7 @@ Example shipped with the repository: [`etc/config.toml.example`](../etc/config.t
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `url` | required by configuration loader; example `http://127.0.0.1:8097` | Base URL of TorrServer, without `/torrents` or `/playlist`. Must begin with `http://` or `https://`. |
+| `url` | required by configuration loader; example `http://127.0.0.1:8097` | Base URL of TorrServer, without `/torrents`, `/playlist` or `/ffp/...`. Must begin with `http://` or `https://`. |
 | `timeout_sec` | `20` | General TorrServer request timeout in seconds. |
 | `remove_timeout_sec` | `60` | Timeout budget for source-torrent removal and its confirmation. |
 | `metadata_wait_sec` | `10` | Maximum time allowed to wait for torrent metadata/FileStats to become available. |
@@ -38,17 +38,17 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 | `tv_unmatched_season` | `0` | Season number used when a TV file's season cannot be inferred from its path/title. `0` corresponds to Specials-style season semantics. |
 | `video_extensions` | See `etc/config.toml.example` | List of file extensions eligible for video STRM generation and cached-NFO lookup. Extensions may be written with or without the leading dot. Audio, subtitle and image files do not get their own video STRM. |
 
-### Legacy \`[quality]\` settings
+### Legacy `[quality]` settings
 
-In v1.4.1, \`[quality].timeout_sec\` and \`[quality].retries\` are no longer used. Existing config files may retain these keys, but they are ignored. torr2strm does not call TorrServer \`/ffp/{hash}/{file_id}\`, does not execute a local ffprobe, and does not require ffprobe to be installed on TorrServer.
+In v1.4.1, `[quality].timeout_sec` and `[quality].retries` are no longer used. Existing config files may retain these keys, but they are ignored. torr2strm does not call TorrServer `/ffp/{hash}/{file_id}`, does not execute a local ffprobe, and does not require ffprobe to be installed on TorrServer.
 
 Quality decision rules:
 
 - Read only already-existing ffprobe payloads or valid cached NFO details, if any.
 - Then read structured resolution/quality fields from TorrServer metadata and exact-hash JacRed results.
 - Then inspect explicit resolution/HDR/Dolby Vision markers in the release title.
-- Use the best-priority available label for the STRM name, but put the torrent under \`4K\` if **any available source** provides affirmative 4K evidence. If none does, use \`1080p\`.
-- If no usable resolution label is available, the root is \`1080p\` and no quality suffix is written to the basename.
+- Use the best-priority available label for the STRM name, but put the torrent under `4K` if **any available source** provides affirmative 4K evidence. If none does, use `1080p`.
+- If no usable resolution label is available, the root is `1080p` and no quality suffix is written to the basename.
 
 ### `[jacred]`
 
