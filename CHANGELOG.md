@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0
+
+- Implemented a Kodi-specific normalized media tree grouped by trusted movie/series identity, without changing Jellyfin's existing directory-building behavior.
+- Added one shared Kodi series directory per quality root with `Season NN` children for identified series; unknown series retain the release-title directory and original torrent-internal hierarchy.
+- Separated the two-value quality root (`4K` / `1080p`) from the visible per-release quality label. Quality falls back from primary-file ffprobe/cache to structured metadata, explicit release-title markers, and unknown.
+- Preserved per-file ffprobe collection for accurate sidecar NFO stream details while classifying a torrent from its primary eligible video only.
+- Changed Kodi item basenames to show the quality label before the short torrent hash; unknown quality has no quality label.
+- Changed generated NFOs to omit all title/name fields; movie and series-root NFOs keep IDs/Combination URLs, and episode NFOs keep IDs/coordinates and per-file stream details without a scraper URL.
+- Added manifest v5 and safer Kodi shared-folder reconciliation; only no-longer-referenced managed files are removed, shared directories are pruned only when empty, and Kodi remains read-only.
+- Bumped NFO format to v3. Existing development trees are intended to be cleaned and rebuilt instead of migrated.
+
 ## 1.3.2
 
 - Added independent `NFO_FORMAT_VERSION=2`, separate from software and manifest versions.
