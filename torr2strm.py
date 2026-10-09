@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.1 - TorrServer -> multiple STRM materialized trees.
+"""torr2strm 1.4.2 - TorrServer -> multiple STRM materialized trees.
 
 Key rules:
 - TorrServer is the source of truth.
@@ -38,7 +38,7 @@ import tomllib
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.1"
+VERSION = "1.4.2"
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
