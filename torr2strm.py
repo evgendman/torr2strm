@@ -2233,6 +2233,7 @@ class OutputRunner:
         self._mkdir(torrent_dir)
 
         desired: dict[str, dict[str, Any]] = {}
+        nfo_contents_by_file_id: dict[int, str] = {}
         desired_dirs: set[str] = {rel_torrent_dir}
         video_files = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
         if not video_files:
@@ -2331,6 +2332,7 @@ class OutputRunner:
             else:
                 nfo_content = self._nfo_content(snap, file, None, source)
 
+            nfo_contents_by_file_id[file.file_id] = nfo_content
             self._write_nfo(nfo_path, nfo_content, snap.hash, file.path, rel_nfo)
             self._write_strm(strm_path, url, snap.hash, file.path, rel_strm)
             desired[rel_strm] = {
@@ -2350,9 +2352,21 @@ class OutputRunner:
 
         tvshow_nfo_rel: str | None = None
         if normalized_tv:
+            group_key = (snap.category, snap.quality or "1080p", identity)
+            canonical_hash = self.kodi_series_canonical_hash_by_identity.get(group_key)
             tvshow_path = safe_join(torrent_dir, "tvshow.nfo")
             tvshow_nfo_rel = tvshow_path.relative_to(self.root).as_posix()
-            self._write_nfo(tvshow_path, self._tvshow_nfo_content(snap), snap.hash, snap.title, tvshow_nfo_rel)
+            # One stable representative release writes the shared series NFO
+            # for the quality root; sibling torrents must not overwrite it.
+            if snap.hash == canonical_hash:
+                representative_nfo = nfo_contents_by_file_id.get(primary.file_id)
+                self._write_nfo(
+                    tvshow_path,
+                    self._tvshow_nfo_content(snap, identity, representative_nfo),
+                    snap.hash,
+                    snap.title,
+                    tvshow_nfo_rel,
+                )
 
         ids = provider_ids(snap.metadata, snap.title)
         metadata_record = {f"{kind}id": value for kind, value in ids.items()}
