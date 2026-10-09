@@ -1,4 +1,4 @@
-# torr2strm v1.4.1
+# torr2strm v1.4.2
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
