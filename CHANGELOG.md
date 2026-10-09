@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.1
+
+- Removed all TorrServer `/ffp/{hash}/{file_id}` requests and local ffprobe execution from quality classification.
+- Classifies using only already-available ffprobe payloads/cached NFO, structured quality fields and explicit release-title markers.
+- Sends a torrent to `4K` if any available source provides affirmative 4K evidence; otherwise it goes to `1080p`.
+- Keeps the display quality label separate from the root; unknown label means no quality suffix.
+- Writes stream details into NFO only when already available; otherwise NFO contains identity data only.
+- Legacy `[quality]` timeout/retry settings are ignored. Manifest v5 and NFO v3 are unchanged.
+
 ## 1.4.0
 
 - Implemented a Kodi-specific normalized media tree grouped by trusted movie/series identity, without changing Jellyfin's existing directory-building behavior.
