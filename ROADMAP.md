@@ -269,7 +269,7 @@ The work is complete when the independent Kodi tree groups identified releases b
 
 ## 7. Current status
 
-- [x] Phase 0 — Behavior decisions finalized (planning only; fixtures still need implementation)
+- [x] Phase 0 — Behavior decisions finalized
 - [x] Phase 1 — Torrent-level quality resolution implemented
 - [x] Phase 2 — Title-free NFO contract implemented
 - [x] Phase 3 — Logical identity and Kodi path planning implemented
