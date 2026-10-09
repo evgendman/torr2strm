@@ -58,7 +58,7 @@ Quality decision rules:
 | `api_key` | legacy setting; ignored | Retained only so older TOML files continue to load. The direct public JacRed v2 client does not send an API key. |
 | `indexer_id` | legacy setting; ignored | Retained only so older TOML files continue to load. The direct JacRed v2 endpoint searches its public aggregate and does not use a Prowlarr indexer ID. |
 | `limit` | `1000` | Maximum number of JacRed v2 results per query. Allowed range: `1`–`1000`; use `1000` to match the previous working client. |
-| `timeout_sec` | `10` | HTTP timeout per JacRed search request. Must be greater than zero. |
+| `timeout_sec` | `30` | HTTP timeout per direct JacRed v2 JSON request. Must be greater than zero. |
 | `retries` | `0` | Number of extra attempts for a failed JacRed request. Must be non-negative. |
 
 `torr2strm` calls `https://jac.red/api/v2.0/indexers/all/results` directly, matching the existing `jacred2prowlarr` client. It sends `q`, `limit`, `category=movie_` or `category=tv_` when applicable, and `year` when found in the query. The response must be JSON with a `Results` array. The Torznab XML endpoint and Prowlarr Search Feed are not used by v1.4.4. Exact-hash matching remains mandatory. See [Architecture](ARCHITECTURE.md) for matching and category rules.
@@ -122,7 +122,7 @@ enabled = true
 url = "https://jac.red"
 # Legacy api_key and indexer_id keys are not needed by direct JacRed v2 API.
 limit = 1000
-timeout_sec = 10
+timeout_sec = 30
 retries = 0
 
 [logging]
