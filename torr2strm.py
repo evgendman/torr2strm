@@ -323,6 +323,12 @@ def quality_label_from_text(value: Any) -> str | None:
     text = html.unescape(str(value or "")).lower()
     if not text.strip():
         return None
+    dimensions = re.search(r"(?<!\d)(\d{3,5})\s*[x×]\s*(\d{3,5})(?!\d)", text)
+    if dimensions:
+        try:
+            return quality_label_from_dimensions(int(dimensions.group(1)), int(dimensions.group(2)))
+        except (TypeError, ValueError):
+            pass
     if re.search(r"(?<![a-z0-9])(?:8k|4320p)(?![a-z0-9])", text):
         label = "4320p"
     elif re.search(r"(?<![a-z0-9])(?:4k|uhd|2160p|2160i)(?![a-z0-9])", text):
