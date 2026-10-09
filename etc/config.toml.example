@@ -48,7 +48,7 @@ video_extensions = [
 # No Prowlarr instance or API key is required.
 url = "https://jac.red"
 limit = 1000
-timeout_sec = 10
+timeout_sec = 30
 retries = 0
 
 [logging]
