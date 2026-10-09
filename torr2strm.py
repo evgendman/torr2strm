@@ -204,7 +204,9 @@ def extract_btih(value: Any) -> str | None:
 def quality_from_dimensions(width: int, height: int) -> str:
     if width <= 0 or height <= 0:
         raise ValueError(f"invalid video dimensions {width}x{height}")
-    return "4K" if max(width, height) >= 2160 else "1080p"
+    # Use 4K-class horizontal/vertical dimensions, not the generic 2160 threshold:
+    # 2560x1440 is 1440p and belongs in the "1080p" (everything else) root.
+    return "4K" if max(width, height) >= 3840 else "1080p"
 
 
 def usable_ffprobe(payload: Any) -> dict[str, Any] | None:
