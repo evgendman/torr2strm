@@ -1,4 +1,4 @@
-# torr2strm v1.3.2
+# torr2strm v1.4.0
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
@@ -42,7 +42,8 @@ video_extensions = [
 
 [quality]
 # torr2strm calls TorrServer GET /ffp/{hash}/{file_id}; it does not launch ffprobe itself.
-# Ensure ffprobe is available on the TorrServer host. 2160-class -> 4K; otherwise -> 1080p.
+# The primary eligible video determines the torrent root and display quality label.
+# Fallback: structured quality fields, explicit title markers, then unknown (1080p root, no label).
 timeout_sec = 12
 retries = 0
 
