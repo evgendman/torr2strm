@@ -3054,7 +3054,7 @@ def load_config(path: Path) -> dict[str, Any]:
     jacred_limit = int(jacred_cfg.get("limit", 1000))
     if jacred_limit < 1 or jacred_limit > 1000:
         raise ValueError("[jacred].limit must be between 1 and 1000")
-    jacred_timeout = float(jacred_cfg.get("timeout_sec", 10))
+    jacred_timeout = float(jacred_cfg.get("timeout_sec", 30))
     jacred_retries = int(jacred_cfg.get("retries", 0))
     if jacred_timeout <= 0:
         raise ValueError("[jacred].timeout_sec must be > 0")
