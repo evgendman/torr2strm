@@ -1505,7 +1505,7 @@ class JacRedClient:
         self.api_key = str(cfg.get("api_key", "")).strip()  # Legacy Prowlarr-era option; public JacRed v2 does not require it.
         if self.api_key:
             LOG.warning("JACRED_API_KEY_IGNORED direct JacRed v2 API does not use the configured api_key")
-        self.indexer_id = int(cfg.get("indexer_id", 0))  # Legacy Prowlarr-only setting; unused by native Torznab.
+        self.indexer_id = int(cfg.get("indexer_id", 0))  # Legacy Prowlarr-only setting; unused by direct JacRed v2 JSON.
         if self.indexer_id > 0:
             LOG.warning("JACRED_INDEXER_ID_IGNORED value=%s; direct public JacRed v2 JSON searches all trackers", self.indexer_id)
         self.limit = int(cfg.get("limit", 1000))
