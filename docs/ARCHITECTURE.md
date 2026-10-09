@@ -92,7 +92,7 @@ Kodi series/season directories may be shared by several torrents. The synchroniz
 No human-readable display title/name fields are written to any NFO. This is intentional: Kodi was observed to replace its scraper-localized title with NFO title values after scraping; Jellyfin should obtain localized names by provider ID.
 
 - Movie NFO: trusted IDs, per-file ffprobe stream details, and a Combination NFO scraper URL when a trustworthy TMDb ID is available.
-- `tvshow.nfo`: trusted series IDs and Combination NFO URL; no title and no arbitrary episode stream details.
+- `tvshow.nfo`: trusted series IDs, Combination NFO URL, and streamdetails copied from the deterministic representative release for that quality root; no title. Each episode sidecar NFO retains its own exact source-file streamdetails.
 - Episode NFO: ordinary episode NFO, trusted IDs, known season/episode coordinates, and stream details from that exact source file; no Combination URL.
 - If ffprobe is unavailable, the synchronizer still creates the STRM and an identity-only NFO. That NFO is not treated as a technical-data cache.
 
