@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.0 - TorrServer -> multiple STRM materialized trees.
+"""torr2strm 1.4.1 - TorrServer -> multiple STRM materialized trees.
 
 Key rules:
 - TorrServer is the source of truth.
@@ -38,7 +38,7 @@ import tomllib
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
@@ -366,36 +366,70 @@ def quality_label_from_text(value: Any) -> str | None:
     return label
 
 
-def quality_label_from_metadata(metadata: dict[str, Any] | None) -> str | None:
-    """Inspect explicitly named structured quality fields, not generic titles or codec fields."""
+
+def ffprobe_payload_from_metadata(metadata: Any) -> dict[str, Any] | None:
+    """Find already-present ffprobe JSON in metadata; never request or calculate it."""
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            return None
+    direct = usable_ffprobe(metadata)
+    if direct is not None:
+        return direct
+    if isinstance(metadata, list):
+        for item in metadata:
+            payload = ffprobe_payload_from_metadata(item)
+            if payload is not None:
+                return payload
+        return None
     if not isinstance(metadata, dict):
         return None
+    payload_keys = {"ffprobe", "ffprobejson", "probe", "probejson", "mediainfo", "mediainfojson", "streamdetails", "fileinfo"}
+    container_keys = {"info", "metadata", "release", "media", "details", "torrserver", "qualityinfo"}
+    for key, value in metadata.items():
+        normalized_key = norm_key(str(key))
+        if normalized_key in payload_keys:
+            payload = ffprobe_payload_from_metadata(value)
+            if payload is not None:
+                return payload
+        elif normalized_key in container_keys and isinstance(value, (dict, list)):
+            payload = ffprobe_payload_from_metadata(value)
+            if payload is not None:
+                return payload
+    return None
+
+
+def quality_labels_from_metadata(metadata: dict[str, Any] | None) -> list[str]:
+    """Return every explicit structured quality label, preserving source order."""
+    if not isinstance(metadata, dict):
+        return []
     accepted = {
         "quality", "qualityname", "qualitylabel", "resolution", "resolutionname",
         "videoquality", "videoresolution", "videotype", "definition",
     }
+    nested = {"info", "metadata", "release", "media", "mediainfo", "details", "torrserver", "qualityinfo"}
+    result: list[str] = []
     for key, value in metadata.items():
         normalized_key = norm_key(str(key))
         if normalized_key in accepted:
             candidates = value if isinstance(value, (list, tuple)) else [value]
             for candidate in candidates:
                 if isinstance(candidate, dict):
-                    nested = quality_label_from_metadata(candidate)
-                    if nested:
-                        return nested
+                    result.extend(quality_labels_from_metadata(candidate))
                 elif candidate not in (None, ""):
                     label = quality_label_from_text(candidate)
-                    if label:
-                        return label
-                    if re.fullmatch(r"\s*(?:4320|2160|1440|1080|720|576|480|360|240)\s*", str(candidate)):
+                    if label is None and re.fullmatch(r"\s*(?:4320|2160|1440|1080|720|576|480|360|240)\s*", str(candidate)):
                         label = quality_label_from_text(f"{str(candidate).strip()}p")
-                        if label:
-                            return label
-        if isinstance(value, dict) and normalized_key in {"info", "metadata", "release", "media", "mediainfo", "details", "torrserver", "qualityinfo"}:
-            label = quality_label_from_metadata(value)
-            if label:
-                return label
-    return None
+                    if label:
+                        result.append(label)
+        elif normalized_key in nested and isinstance(value, dict):
+            result.extend(quality_labels_from_metadata(value))
+    return list(dict.fromkeys(result))
+
+def quality_label_from_metadata(metadata: dict[str, Any] | None) -> str | None:
+    labels = quality_labels_from_metadata(metadata)
+    return labels[0] if labels else None
 
 
 def quality_root_from_label(label: str | None) -> str:
@@ -1093,7 +1127,7 @@ class TorrServerClient:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url, data=body, method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "torr2strm/1.3.0"},
+            headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "torr2strm/1.4.1"},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout if timeout is None else timeout) as resp:
@@ -1137,7 +1171,7 @@ class TorrServerClient:
         url = f"{self.base_url}/playlist?{query}"
         req = urllib.request.Request(
             url, method="GET",
-            headers={"Accept": "audio/x-mpegurl,text/plain,*/*", "User-Agent": "torr2strm/1.3.0"},
+            headers={"Accept": "audio/x-mpegurl,text/plain,*/*", "User-Agent": "torr2strm/1.4.1"},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -1149,32 +1183,6 @@ class TorrServerClient:
             raise TorrServerError(f"cannot connect to TorrServer metadata endpoint {url}: {exc.reason}") from exc
         except TimeoutError as exc:
             raise TorrServerError(f"timeout loading torrent metadata for {torrent_hash}") from exc
-
-    def get_ffprobe(self, torrent_hash: str, file_id: int, timeout: float | None = None) -> dict[str, Any]:
-        quoted_hash = urllib.parse.quote(torrent_hash, safe="")
-        url = f"{self.base_url}/ffp/{quoted_hash}/{file_id}"
-        req = urllib.request.Request(
-            url, method="GET",
-            headers={"Accept": "application/json", "User-Agent": "torr2strm/1.3.0"},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout if timeout is None else timeout) as resp:
-                raw = resp.read()
-                if not raw:
-                    raise TorrServerError(f"empty ffprobe response from {url}")
-                decoded = json.loads(raw.decode("utf-8"))
-                if not isinstance(decoded, dict):
-                    raise TorrServerError(f"TorrServer ffprobe response is not an object for {torrent_hash}/{file_id}")
-                return decoded
-        except urllib.error.HTTPError as exc:
-            text = exc.read().decode("utf-8", "replace")
-            raise TorrServerError(f"ffprobe HTTP {exc.code} {url}: {text[:500]}") from exc
-        except urllib.error.URLError as exc:
-            raise TorrServerError(f"cannot connect to TorrServer ffprobe endpoint {url}: {exc.reason}") from exc
-        except TimeoutError as exc:
-            raise TorrServerError(f"timeout talking to TorrServer ffprobe endpoint {url}") from exc
-        except json.JSONDecodeError as exc:
-            raise TorrServerError(f"invalid JSON from TorrServer ffprobe endpoint {url}: {exc}") from exc
 
     def remove_torrent(self, torrent_hash: str) -> None:
         self._post({"action": "rem", "hash": torrent_hash}, timeout=self.remove_timeout)
@@ -1639,39 +1647,13 @@ class MediaInfoResolver:
                     return path, content
         return None
 
-    def _probe_torrserver(self, torrent: TorrentSnapshot, file: TorrentFile) -> dict[str, Any]:
-        last_error: Exception | None = None
-        for attempt in range(1, self.retries + 2):
-            try:
-                payload = self.client.get_ffprobe(torrent.hash, file.file_id, timeout=self.timeout_sec)
-                normalized = usable_ffprobe(payload)
-                if normalized is None:
-                    raise RuntimeError("TorrServer ffprobe returned no usable video stream")
-                self.stats["torrserver_ffprobe"] += 1
-                stream = ffprobe_video_stream(normalized)
-                quality = quality_from_dimensions(int(stream.get("width") or 0), int(stream.get("height") or 0))
-                LOG.info(
-                    "MEDIAINFO hash=%s file=%s dimensions=%sx%s quality=%s via=torrserver",
-                    torrent.hash, file.path, stream.get("width"), stream.get("height"), quality,
-                )
-                return normalized
-            except Exception as exc:
-                last_error = exc
-                if attempt <= self.retries:
-                    LOG.warning(
-                        "FFPROBE_RETRY hash=%s file=%s attempt=%d/%d error=%s",
-                        torrent.hash, file.path, attempt + 1, self.retries + 1, exc,
-                    )
-                    time.sleep(0.5)
-        raise RuntimeError(f"ffprobe failed for {torrent.hash}/{file.file_id}: {last_error}")
-
     def prepare(
         self,
         torrent: TorrentSnapshot,
         match: JacRedMatch | None,
         required_file_ids: set[int],
     ) -> tuple[str, str | None, dict[int, dict[str, Any]], dict[int, str], dict[int, str]]:
-        """Resolve one torrent-level quality and per-file ffprobe/NFO data."""
+        """Resolve quality from data already available; never call TorrServer /ffp/."""
         candidates = self._video_files(torrent, self.extensions)
         if not candidates:
             raise RuntimeError(f"torrent {torrent.hash}: no video files")
@@ -1689,84 +1671,73 @@ class MediaInfoResolver:
         probes: dict[int, dict[str, Any]] = {}
         sources: dict[int, str] = {}
         cached_contents: dict[int, str] = {}
-        for file_id, (_, text) in cached.items():
-            cached_contents[file_id] = text
+        for file_id, (_, content) in cached.items():
+            cached_contents[file_id] = content
             sources[file_id] = "nfo"
             self.stats["nfo_reused"] += 1
 
-        # The primary file decides the torrent-level root/label. Preserve each
-        # additional per-file probe below solely to keep its own NFO accurate.
-        root_quality: str | None = None
-        quality_label: str | None = None
-        attempted: set[int] = set()
+        # Only read ffprobe payloads already attached to the torrent/release or
+        # cached NFO. Never request /ffp/ and never probe each episode to classify it.
         primary_cached = cached.get(primary.file_id)
+        cached_label: str | None = None
         if primary_cached:
             details = self._quality_details_from_nfo(primary_cached[0])
             if details:
-                root_quality, quality_label = details
-                LOG.info("QUALITY_FROM_NFO hash=%s root=%s label=%s path=%s", torrent.hash, root_quality, quality_label, primary_cached[0])
+                cached_label = details[1]
+                LOG.info("QUALITY_EVIDENCE hash=%s label=%s via=cached_nfo path=%s", torrent.hash, cached_label, primary_cached[0])
 
-        if quality_label is None and primary.file_id not in cached:
-            attempted.add(primary.file_id)
-            primary_payload: dict[str, Any] | None = None
-            if match is not None and match.ffprobe is not None and usable_ffprobe(match.ffprobe) is not None:
-                primary_payload = usable_ffprobe(match.ffprobe)
-                sources[primary.file_id] = "jacred"
-                LOG.info("MEDIAINFO hash=%s file=%s via=jacred", torrent.hash, primary.path)
-            else:
-                try:
-                    primary_payload = self._probe_torrserver(torrent, primary)
-                    sources[primary.file_id] = "torrserver"
-                except Exception as exc:
-                    LOG.warning("FFPROBE_UNAVAILABLE hash=%s file=%s role=primary error=%s", torrent.hash, primary.path, exc)
-                    sources[primary.file_id] = "unavailable"
-            if primary_payload is not None:
-                probes[primary.file_id] = primary_payload
-                quality_label = quality_label_from_probe(primary_payload)
-                try:
-                    root_quality = media_quality(primary_payload)
-                except Exception:
-                    root_quality = None
-                if quality_label:
-                    LOG.info("QUALITY hash=%s root=%s label=%s via=%s", torrent.hash, root_quality, quality_label, sources[primary.file_id])
+        existing_payloads: list[tuple[str, dict[str, Any]]] = []
+        # JacRedMatch is only created after the caller validates an exact torrent hash match.
+        if match is not None:
+            matched_payload = usable_ffprobe(match.ffprobe) if match.ffprobe is not None else None
+            if matched_payload is None:
+                matched_payload = ffprobe_payload_from_metadata(match.result)
+            if matched_payload is not None:
+                existing_payloads.append(("jacred_ffprobe", matched_payload))
+        snapshot_payload = ffprobe_payload_from_metadata(torrent.metadata)
+        if snapshot_payload is not None:
+            existing_payloads.append(("torrserver_metadata_ffprobe", snapshot_payload))
 
-        # Existing per-file probing remains in place: each NFO should describe
-        # the media item next to it, not copy technical stream details from the
-        # primary torrent file.
+        evidence: list[tuple[str, str]] = []
+        if cached_label:
+            evidence.append(("cached_nfo", cached_label))
+        for source, payload in existing_payloads:
+            label = quality_label_from_probe(payload)
+            if label:
+                evidence.append((source, label))
+        for label in quality_labels_from_metadata(torrent.metadata):
+            evidence.append(("structured_torrent_quality", label))
+        if match is not None:
+            for label in quality_labels_from_metadata(match.result):
+                evidence.append(("structured_jacred_quality", label))
+        title_label = quality_label_from_text(torrent.title)
+        if title_label:
+            evidence.append(("release_title", title_label))
+
+        # Display label follows the preferred available source, but the root is
+        # affirmative-evidence based: ANY source that identifies 4K wins. A later
+        # lower-quality label cannot cancel an earlier/later 4K claim.
+        quality_label = evidence[0][1] if evidence else None
+        quality_root = "4K" if any(quality_root_from_label(label) == "4K" for _, label in evidence) else "1080p"
+
+        # Only an ffprobe payload already present in the release may supply
+        # streamdetails to its primary-file NFO. Cached per-file NFOs take precedence.
+        if primary.file_id not in cached and existing_payloads:
+            source, payload = existing_payloads[0]
+            probes[primary.file_id] = payload
+            sources[primary.file_id] = source
         for file in required:
-            if file.file_id in cached or file.file_id in probes or file.file_id in attempted:
+            if file.file_id in cached or file.file_id in probes:
                 continue
-            attempted.add(file.file_id)
-            try:
-                payload = self._probe_torrserver(torrent, file)
-                probes[file.file_id] = payload
-                sources[file.file_id] = "torrserver"
-            except Exception as exc:
-                sources[file.file_id] = "unavailable"
-                LOG.warning("FFPROBE_UNAVAILABLE hash=%s file=%s role=per-file-nfo error=%s", torrent.hash, file.path, exc)
+            sources[file.file_id] = "unavailable"
 
-        if quality_label is None:
-            quality_label = quality_label_from_metadata(torrent.metadata)
-            if quality_label:
-                LOG.info("QUALITY_FALLBACK hash=%s label=%s via=structured_metadata", torrent.hash, quality_label)
-        if quality_label is None and match is not None:
-            quality_label = quality_label_from_metadata(match.result)
-            if quality_label:
-                LOG.info("QUALITY_FALLBACK hash=%s label=%s via=exact_jacred_structured_metadata", torrent.hash, quality_label)
-        if quality_label is None:
-            quality_label = quality_label_from_text(torrent.title)
-            if quality_label:
-                LOG.info("QUALITY_FALLBACK hash=%s label=%s via=release_title", torrent.hash, quality_label)
-
-        if root_quality not in {"4K", "1080p"}:
-            root_quality = quality_root_from_label(quality_label)
-        if root_quality not in {"4K", "1080p"}:
-            root_quality = "1080p"
+        for source, label in evidence:
+            LOG.info("QUALITY_EVIDENCE hash=%s label=%s via=%s", torrent.hash, label, source)
         LOG.info(
-            "MEDIAINFO_PLAN hash=%s required_files=%d cached_nfo=%d probes=%d root=%s label=%s",
-            torrent.hash, len(required), len(cached), len(probes), root_quality, quality_label or "unknown",
+            "MEDIAINFO_PLAN hash=%s required_files=%d cached_nfo=%d available_ffprobe_payloads=%d root=%s label=%s torrserver_ffprobe_requests=0",
+            torrent.hash, len(required), len(cached), len(existing_payloads), quality_root, quality_label or "unknown",
         )
-        return root_quality, quality_label, probes, sources, cached_contents
+        return quality_root, quality_label, probes, sources, cached_contents
 
 
 @dataclass(frozen=True)
@@ -2877,7 +2848,7 @@ class SyncCoordinator:
             if output.spec.name == "jellyfin" and output.removed_hashes:
                 removed_hashes.update(output.removed_hashes)
 
-        self.stats["torrserver_ffprobe"] = resolver.stats["torrserver_ffprobe"]
+        self.stats["torrserver_ffprobe"] = 0
         self.stats["nfo_reused"] = resolver.stats["nfo_reused"]
         elapsed = time.monotonic() - started
         LOG.info(
@@ -2904,7 +2875,6 @@ def load_config(path: Path) -> dict[str, Any]:
     ts = raw.get("torrserver", {})
     outputs = raw.get("outputs", {})
     sync = raw.get("sync", {})
-    quality_cfg = raw.get("quality", {})
     jacred_cfg = raw.get("jacred", {})
     logging_cfg = raw.get("logging", {})
     url = str(ts.get("url", "")).strip().rstrip("/")
@@ -2973,10 +2943,6 @@ def load_config(path: Path) -> dict[str, Any]:
         "sync": {
             "tv_unmatched_season": int(sync.get("tv_unmatched_season", 0)),
             "video_extensions": normalized_extensions,
-        },
-        "quality": {
-            "timeout_sec": float(quality_cfg.get("timeout_sec", 12)),
-            "retries": int(quality_cfg.get("retries", 0)),
         },
         "jacred": {
             "url": jacred_url,
