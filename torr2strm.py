@@ -420,6 +420,29 @@ def media_logical_identity(snap: "TorrentSnapshot") -> str | None:
     return None
 
 
+
+def provider_ids_for_snapshot(snap: "TorrentSnapshot") -> dict[str, str]:
+    """Prefer explicitly series-scoped identifiers for TV NFOs and logical grouping."""
+    metadata = snap.metadata if isinstance(snap.metadata, dict) else {}
+    ids = provider_ids(metadata, snap.title)
+    if snap.category == "tv":
+        raw_series_ids = metadata_value(metadata, "seriesProviderIds", "showProviderIds", "tvProviderIds")
+        if isinstance(raw_series_ids, dict):
+            ids.update(provider_ids_from_mapping(raw_series_ids))
+        series_keys = {
+            "tmdb": ("seriesTmdbId", "showTmdbId", "tvTmdbId"),
+            "tvdb": ("seriesTvdbId", "showTvdbId", "tvdbSeriesId"),
+            "imdb": ("seriesImdbId", "showImdbId"),
+            "tvmaze": ("seriesTvmazeId", "showTvmazeId"),
+            "trakt": ("seriesTraktId", "showTraktId"),
+            "kinopoisk": ("seriesKinopoiskId", "showKinopoiskId"),
+        }
+        for kind, keys in series_keys.items():
+            value = metadata_value(metadata, *keys)
+            if value not in (None, ""):
+                _put_provider_id(ids, kind, value)
+    return ids
+
 def source_episode_coordinates(path_value: str, torrent_title: str) -> tuple[int | None, int | None]:
     """Return a season/episode only when explicit coordinates can be parsed."""
     text = f"{path_value} {torrent_title}"
@@ -1949,7 +1972,7 @@ class OutputRunner:
         import xml.etree.ElementTree as ET
         root_tag = "episodedetails" if snap.category == "tv" else "movie"
         root = ET.Element(root_tag)
-        ids = provider_ids(snap.metadata, snap.title)
+        ids = provider_ids_for_snapshot(snap)
 
         # Never emit title/name fields: Kodi may overwrite the localized scraper
         # title with NFO titles after scraping, and Jellyfin should localize by ID.
@@ -2012,7 +2035,7 @@ class OutputRunner:
     def _tvshow_nfo_content(self, snap: TorrentSnapshot) -> str:
         import xml.etree.ElementTree as ET
         root = ET.Element("tvshow")
-        ids = provider_ids(snap.metadata, snap.title)
+        ids = provider_ids_for_snapshot(snap)
         default_type = "tmdb" if "tmdb" in ids else "imdb" if "imdb" in ids else "tvdb" if "tvdb" in ids else next(iter(ids), None)
         for kind, value in ids.items():
             if kind in {"tmdb", "imdb", "tvdb", "tvmaze", "trakt", "kinopoisk", "mal", "anidb", "anilist", "douban", "wikidata"}:
