@@ -194,6 +194,8 @@ def test_quality_root_and_display_label_are_separate_and_quality_fallback_is_exp
     assert quality_label_from_probe(probe(1280, 720)) == "720p"
     assert quality_label_from_probe(probe(3840, 2160, hdr="dv")) == "2160p DV"
     assert quality_label_from_text("Release.WEB-DL.1080p.HDR") == "1080p HDR"
+    assert quality_label_from_text("Release 1920x1080 WEB-DL") == "1080p"
+    assert quality_label_from_text("Release 3840x2160 HDR") == "2160p HDR"
     assert quality_label_from_text("Release 4K Dolby Vision") == "2160p DV"
     assert quality_label_from_text("WEB-DL HEVC") is None
     assert quality_label_from_metadata({"quality": "720p WEB-DL"}) == "720p"
