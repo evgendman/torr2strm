@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Status: v1.4.3 candidate in progress; direct JacRed Torznab integration implemented.** Python compilation and all 36 regression tests passed. Real-player validation on the mini-PC remains pending.
+> **Status: v1.4.3 candidate committed to `main`; CI verified.** Python compilation and all 36 regression tests passed. Direct public JacRed Torznab integration is implemented; live mini-PC API validation and real-player validation remain pending.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
