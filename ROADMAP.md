@@ -1,12 +1,12 @@
 # torr2strm Development Roadmap
 
-> **Status: planning only.** This document records the agreed direction for the next development stages. It does not implement or authorize code changes by itself.
+> **Status: planning baseline established; implementation not yet started.** This roadmap records the agreed behavior contract and implementation sequence. It does not implement or authorize code changes by itself.
 > Baseline: repository release `v1.3.2`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
 ## 1. Goal
 
-Keep Jellyfin's existing directory-building behavior intact while adding a normalized, human-readable Kodi tree that groups all identified releases of the same series into one series directory per quality root. Preserve torrent identity, technical media information, independent output manifests, and safe synchronization.
+Keep Jellyfin's existing output-tree construction and grouping behavior intact while implementing a separate normalized, human-readable Kodi tree. For identified series, Kodi groups releases by the stable series identity into one series directory per quality root. Preserve individual releases, truthful per-file NFO stream details, independent manifests, and safe synchronization.
 
 ## 2. Current baseline (`v1.3.2`)
 
@@ -14,216 +14,268 @@ Keep Jellyfin's existing directory-building behavior intact while adding a norma
 
 - Jellyfin is the authoritative output and the only output that can initiate reverse deletion of a TorrServer torrent.
 - It creates file-level STRM entries for playable video files, using TorrServer `/play/{hash}/{file_id}` URLs.
+- Its current directory-building/grouping behavior is the compatibility baseline and must not be redesigned as part of Kodi normalization.
 - Reverse deletion is opt-in and uses `action=rem` only. `action=drop` is not used.
 - Jellyfin and Kodi have independent output roots, root markers, and manifests.
 
 ### Kodi/Elementum output
 
-- Kodi output is currently read-only: removing a Kodi STRM must never remove the source torrent.
+- Kodi output is read-only: removing a Kodi STRM must never remove the source torrent.
 - Movies currently use a torrent-level STRM and do not use `oindex`.
 - TV output currently creates one STRM per playable file and passes the original zero-based FileStats order as Elementum `oindex`.
-- Playback uses an Elementum plugin URI. The tree-layout work must not accidentally break this playback contract.
+- Playback uses an Elementum plugin URI. The tree-layout work must not break this playback contract.
 
 ### Shared media information
 
-- TorrServer remains the source of truth for torrent inventory, BTIH/info hash, and FileStats.
-- JacRed is optional enrichment and a match is accepted only when its hash exactly matches the TorrServer torrent.
-- The current implementation obtains ffprobe JSON through TorrServer `/ffp/{hash}/{file_id}`; it does not run a local ffprobe process.
-- The current quality root has only two values: `4K` and `1080p` (everything else). It is presently determined from the primary eligible video's real dimensions.
-- NFO format version 2 includes technical stream details and a Combination NFO URL for movie NFOs and `tvshow.nfo`. The current implementation reuses/copies NFO data across outputs.
+- TorrServer is the source of truth for torrent inventory, info hash, and FileStats.
+- JacRed is optional enrichment; a JacRed result is trusted only after its info hash/BTIH exactly matches the TorrServer torrent.
+- torr2strm requests ffprobe JSON from TorrServer's `/ffp/{hash}/{file_id}` endpoint; it does not run or install a local `ffprobe` process.
+- The existing resolver may probe other playable video files to write accurate stream details into each file's NFO. Preserve that behavior: each generated NFO must describe its own STRM's source media file.
+- The current quality root has only two values: `4K` and `1080p` (everything else). The root is based on the primary eligible video file of the torrent, currently selected by descending file size with path as a deterministic tie-breaker.
+- Kodi has been observed to replace scraped display titles with titles from NFO late in its processing. Jellyfin reads ffprobe information present in NFO but does not use it as the effective stream metadata. Therefore the target NFO contract deliberately excludes human-readable name/title fields from both outputs.
 
-## 3. Target invariants
+## 3. Agreed target invariants
 
-These are the constraints that all later implementation stages must preserve.
+These decisions are settled and should not be reopened during implementation unless a reproducible technical defect makes a change unavoidable.
 
-1. **Jellyfin directory layout is not being redesigned.** Its existing folder-building/grouping behavior remains the compatibility baseline. The Kodi tree is developed independently.
-2. **Only two quality roots exist:** `4K` and `1080p`. `1080p` means every release not classified into the `4K` root; it does not claim that every contained file is actually 1080p.
-3. **Root and display quality are separate values.** `quality_root` chooses `4K` or `1080p`; `quality_label` describes the actual media item, for example `480p`, `720p`, `1080p`, or `2160p HDR` when those properties are known.
-4. **Quality is resolved before the output path and filename are constructed.** The resolved values are reused throughout path construction; the name builder must not independently reclassify quality.
-5. **One Kodi series directory per logical series per quality root.** The display name is based on the series name and year. A torrent hash is not routinely added to the series-directory name.
-6. **Multiple releases remain separate items.** Two torrents representing the same episode must not overwrite or collapse into one STRM. A short hash is included in each release's basename for human-visible disambiguation; the full torrent hash remains in the manifest.
-7. **Kodi episode names expose both identity and quality.** The basename includes the readable series/episode name, `SxxEyy`, a short hash, and the final human-readable quality label when known.
-8. **Kodi movie items are grouped under a readable movie name/year directory.** Each distinct release remains independently addressable and includes a short hash and quality label in its item name.
-9. **Identifiers belong in metadata, not routinely in display names.** Trusted movie/series/episode identifiers should be written to NFO where applicable; the series directory remains human-readable.
-10. **NFO must retain useful ffprobe-derived stream details.** Do not remove technical fields simply because their interpretation differs between Kodi and Jellyfin.
-11. **Do not force display titles unnecessarily.** Avoid writing a title field when it would override a scraper/provider's localized title and the field is not required for identification or matching.
-12. **Movie and series NFOs may use Combination NFO; episode NFOs remain ordinary episode NFOs.** The exact field set and the real Jellyfin behavior must be validated before finalizing the implementation.
-13. **Unknown items use a safe fallback.** If there is not enough trustworthy information to identify a movie or series, preserve the source torrent's hierarchy as closely as practical. Do not invent IDs or guess movie-versus-TV from a title. `_uncategorized` remains meaningful.
-14. **The manifest, not filenames, is the source of truth for reconciliation and deletion.** It maps physical paths to the full torrent hash and file identity.
-15. **Safety boundaries remain unchanged.** Kodi is read-only; only the explicitly enabled Jellyfin reverse-delete path may call TorrServer `action=rem`; never implement `action=drop`.
+### 3.1 Output separation
+
+1. **Jellyfin path/grouping behavior remains unchanged.** Its current folder-generation algorithm is not redesigned. It will continue to materialize its existing tree and use its current per-file playback URLs.
+2. **Kodi gets its own normalized tree.** Kodi path planning must be independent of Jellyfin path planning, even though discovery and media-information collection may be shared.
+3. Each output keeps an independent root, root marker, and manifest. Kodi stays read-only; only an explicitly enabled, tracked Jellyfin STRM deletion can cause TorrServer `action=rem`. Never use `action=drop`.
+
+### 3.2 Quality root and quality label
+
+4. There are exactly two quality roots: `4K` and `1080p`. The `1080p` root contains everything not classified into `4K`; it does not assert that every release within it is actually 1080p.
+5. **Quality is a torrent-level decision based on the primary eligible video file**, selected using the current rule (largest file first, then path as a deterministic tie-breaker). Do not run extra ffprobe requests on every episode merely to classify quality. Different-quality episodes in one torrent are considered an exceptional edge case; their root and display label still follow the primary video stream.
+6. Preserve per-file ffprobe collection for NFO accuracy. When the output materializes a STRM for a particular video file, its NFO should retain that file's own technical stream details. These per-file details must not override the torrent-level root/label decision.
+7. Resolve quality before constructing paths or names, using this priority:
+   1. usable ffprobe data for the primary eligible video file (including a valid cached NFO for that exact source file as reusable prior ffprobe data);
+   2. a usable structured quality field belonging to the same TorrServer torrent or to an exact-hash JacRed match;
+   3. explicit resolution/HDR/Dolby Vision markers in the torrent release title;
+   4. unknown quality.
+8. Derive `quality_root` and `quality_label` separately from the chosen result. If the quality is unknown, use the `1080p` root but **omit the quality label** from the basename. Do not turn the `1080p` root into a false claim about the actual resolution.
+9. Normalize known quality markers to a consistent label. Examples include `480p`, `720p`, `1080p`, `1080i`, `1440p`, `2160p`, `2160p HDR`, and `2160p DV`. Add `HDR` or `DV` only when supported by usable ffprobe data or an explicit, recognized release-title marker. Do not infer resolution from words such as `WEB-DL`, `BluRay`, `HEVC`, or `HD` alone.
+10. A 4K classification from usable dimensions remains `max(width, height) >= 2160`; all smaller dimensions belong to the `1080p` root. The same torrent-level label is used for links representing that torrent, including its episodes.
+
+### 3.3 Kodi grouping and item names
+
+11. **Known series identity:** episodes whose metadata identifies the same series are grouped under one human-readable series directory per quality root: `<Series Name> (<Year, if known>)/Season NN/`. Use stable, trusted series identifiers for grouping, not title similarity.
+12. Derive the shared series-directory name from canonical metadata for that series. If metadata title is unavailable, use a cleaned series name extracted from the release title or file paths. Varying torrent titles for the same series ID must not create different series directories.
+13. If two different series IDs genuinely collide on the same readable series name/year, append the namespaced series ID as a collision suffix. Do not routinely add a torrent hash to a known series directory.
+14. **Unknown series identity:** use the torrent release title as the torrent-level directory name and preserve that torrent's original internal file hierarchy. Do not merge unknown series based on title similarity and do not invent IDs. Add a short torrent hash to the fallback directory name only if it is necessary to resolve an actual path collision.
+15. For identified movies, group releases by trusted movie identity under a readable `<Movie Name> (<Year, if known>)/` directory in the relevant Kodi quality root. If the movie identity is unknown, use the torrent title and preserve the source torrent's internal hierarchy rather than guessing that separate torrents are the same movie.
+16. Keep the existing Kodi playback model: one torrent-level STRM per movie release, no `oindex`; one STRM per playable TV file, with Elementum `oindex` equal to that file's original zero-based FileStats order. Never substitute the sorted path index or TorrServer `/play` file ID.
+17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; the matching NFO uses the same basename. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm`. If quality is unknown, omit the `— <quality>` portion.
+18. Use the approved short-hash convention already documented for the tree. Start with 8 characters and increase the length only if short hashes collide at the same output path. Do not lengthen non-conflicting hashes.
+19. If two files in one torrent resolve to the same logical episode and would otherwise have the same destination name, append a source-file ordinal from the original FileStats list (displayed starting at 1) only to the colliding items. This suffix is not added to normal episodes.
+20. Do not fabricate episode or season numbers. If the series identity is known and an episode number can be parsed, use it. If an episode number is unknown, preserve a human-readable source filename rather than inventing `SxxEyy`. Use the known season when available; if no season can be inferred, use `Season 00` (existing `tv_unmatched_season = 0` behavior). If series identity is unknown, the original torrent-tree fallback in item 14 takes precedence.
+21. Preserve deterministic filename sanitization and UTF-8-safe length handling. The basename is for human readability; the full torrent hash and source file identity in the manifest remain authoritative.
+
+### 3.4 NFO contract
+
+22. **No human-readable title/name fields are written to NFO.** In particular, do not write `title`, `originaltitle`, `sorttitle`, `showtitle`, or equivalent display-name fields. Kodi's observed post-scrape title replacement makes these fields unsuitable; Jellyfin should also find localized names via provider IDs.
+23. A movie NFO is a Combination NFO containing trusted provider identifiers, technical stream data for its represented media item, and a scraper URL when a trustworthy supported ID is available. Do not add a title/name merely to make the XML look complete.
+24. `tvshow.nfo` is a Combination NFO containing trusted series identifiers and the scraper URL. Because it represents a logical series rather than one particular video file, do not attach arbitrary per-file ffprobe details to this series-level NFO.
+25. An episode NFO uses the ordinary episode NFO format, contains trusted identifiers and the season/episode coordinates when known, and retains the ffprobe stream details for that exact source file. It does not contain a Combination NFO scraper URL.
+26. Keep only values supported by source metadata or ffprobe. No IDs, years, episode numbers, names, or stream characteristics may be invented. The existing per-file ffprobe/NFO behavior stays in place even though the torrent's root and quality label are decided by its primary video file.
+27. Keep a single compatible NFO contract for both output trees unless implementation tests demonstrate a real format incompatibility. Jellyfin may ignore NFO stream details, but that is not a reason to discard technically correct data that Kodi can use.
+
+### 3.5 Identity, manifests, and synchronization
+
+28. Distinguish logical media identity (movie ID, or series ID plus season/episode), release identity (full torrent hash), and physical identity (output path plus source-file identity).
+29. The manifest, never a parsed filename or short hash, is the source of truth mapping managed STRM/NFO paths to full torrent hashes and source files.
+30. Reconciliation must tolerate shared Kodi series/season directories. Removing or updating one torrent may affect only that torrent's entries; it must never delete other releases' entries or a shared folder that still contains managed files.
+31. Remove managed directories only when they are empty and no longer needed. If multiple source files map to the same episode, use the exceptional source-file ordinal rule in item 19 to avoid overwriting.
+32. Torrents disappearing from TorrServer are reflected in all enabled output trees at the next sync. Removing a Kodi STRM never removes a source torrent.
+33. Unknown/insufficiently identified media uses the documented source-tree fallback. Category resolution behavior otherwise remains as documented in the current README and architecture reference; anime is not silently treated as TV and fuzzy title matches are never proof of identity.
 
 ## 4. Development phases
 
-Phases are ordered by dependency. Each phase must meet its exit criteria before the next phase is considered complete.
+Phases are ordered by dependency. Phase 0's decision-making is complete; implementation work begins with Phase 1.
 
-### Phase 0 — Freeze the behavior contract
+### Phase 0 — Freeze the behavior contract — DECISIONS COMPLETE
 
-**Work**
+**Completed planning decisions**
 
-- Record representative current Jellyfin and Kodi output trees as regression fixtures before changing path generation.
-- Write down the exact target layouts for identified TV, identified movies, and unidentified torrent fallback cases.
-- Define the short-hash presentation length and collision behavior. The full hash must always be retained in the manifest.
-- Confirm how a genuine directory-name collision between different series IDs is handled without routinely adding hashes to series directory names.
-- Reconcile one discrepancy between the target specification and the current `v1.3.2` behavior: the target text allows a release-quality fallback when ffprobe is unavailable, while current project documentation explicitly rejects title-based quality inference. If a fallback is accepted, it must use a trustworthy structured field; do not parse free-form title tokens as a silent substitute for ffprobe.
-- Define the display behavior when the actual per-item quality cannot be determined (for example, omit the label or use an explicit unknown label). Never silently label an unknown item `1080p` merely because its root is `1080p`.
+- [x] Confirm that Jellyfin's existing output-tree/grouping behavior is retained.
+- [x] Fix the two quality roots, primary-video quality policy, fallback order, unknown-quality behavior, and quality-label normalization.
+- [x] Fix normalized Kodi grouping for identified media and source-tree fallback for unknown identities.
+- [x] Fix basename suffix order, short-hash collision handling, and the rare duplicate-episode suffix.
+- [x] Fix the NFO contract, including omission of all display-title fields and the Combination NFO rules.
+- [x] Choose a clean rebuild of development output roots instead of migrating old directory trees.
+- [x] Fix manifest ownership and source-deletion safety requirements.
 
-**Exit criteria**
+**Implementation note**
 
-- Target examples and edge cases are documented.
-- Quality fallback and unknown-quality display rules are explicit.
-- The Jellyfin baseline and Kodi playback contract are captured for regression testing.
+These checkboxes mean the decisions are settled, not that code or regression fixtures have already been implemented. Existing Jellyfin/Kodi examples and edge cases still need to become test fixtures in Phase 6.
 
-### Phase 1 — Separate quality-root from per-item quality
-
-**Work**
-
-- Keep the existing two-value root classification: `4K` or `1080p`.
-- Introduce a separately resolved per-item label based on the best available, trustworthy technical stream data, including resolution and HDR information when available.
-- Preserve the current primary-eligible-video rule for the root unless testing identifies a specific correctness problem.
-- Resolve the quality label for the actual movie/episode file rather than copying the root name into every filename.
-- Make the priority and fallback rules explicit and testable; never infer quality from a torrent title alone.
-
-**Exit criteria**
-
-- A release classified into the `1080p` root can correctly carry a `480p`, `720p`, or `1080p` label.
-- HDR is only shown when supported by usable metadata.
-- The same resolved quality object is used for the root, basename, and any metadata decisions.
-
-### Phase 2 — Validate and finalize the NFO contract
+### Phase 1 — Implement torrent-level quality resolution
 
 **Work**
 
-- Preserve ffprobe-derived `<fileinfo>/<streamdetails>` data, including usable video, audio, and subtitle properties.
-- Keep trusted provider identifiers in the relevant movie, series, or episode NFO.
-- Use Combination NFO for movie/series identification where appropriate; keep episode NFO in ordinary episode format.
-- Review title fields so that NFO does not unnecessarily lock the media item to a language-specific title.
-- Test the existing NFO format against Kodi and Jellyfin independently. Kodi has already shown that it can interpret the current ffprobe NFO; Jellyfin's actual consumption of these fields remains to be verified.
-- On a real Jellyfin test library, inspect which stream details are accepted from NFO for `.strm` items and which are independently probed or ignored.
-- Decide whether one shared NFO representation is sufficient or whether small output-specific differences are required. Do not introduce separate formats unless testing demonstrates a need.
-- Define any NFO format-version change and migration behavior before code is written.
+- Keep exactly `4K` and `1080p` as output quality roots.
+- Resolve quality once per torrent from the primary eligible video file; preserve the existing primary-file selection rule (largest eligible video file, path tie-breaker).
+- Preserve the current valid-NFO cache reuse for ffprobe-derived data, then use primary-file ffprobe results from an exact JacRed match or TorrServer as applicable.
+- If usable primary-file ffprobe data cannot be obtained, consult the structured quality field from the same torrent/exact-hash enrichment, then explicit markers in the release title, then treat quality as unknown.
+- Implement separate `quality_root` and `quality_label` values, using the same resolved result for paths and Kodi STRM basenames.
+- Never probe every episode solely to classify its quality. Retain existing per-file ffprobe calls when needed to produce each file's own NFO stream details.
+- Normalize known resolution and HDR/Dolby Vision labels as specified above. Unknown quality goes to `1080p` with no quality suffix.
 
 **Exit criteria**
 
-- Fixture NFOs are accepted by Kodi and Jellyfin without malformed XML or unexpected title overrides.
-- The supported/ignored ffprobe fields are documented from observed behavior, not assumed from XML presence alone.
-- Existing NFO cache reuse and current version-2 migration behavior remain covered by tests.
+- A torrent whose primary stream is 720p can reside under `1080p` and show `720p` in every relevant Kodi release link name.
+- An identifiable 4K torrent uses the `4K` root and a truthful label such as `2160p` (plus HDR/DV only when known).
+- Missing/unusable ffprobe data follows the structured-field → release-title → unknown fallback; unknown does not become a false `1080p` label.
+- Per-file NFO stream details remain tied to the file represented by that NFO.
 
-### Phase 3 — Define logical identity and Kodi series grouping
+### Phase 2 — Implement the agreed NFO contract
 
 **Work**
 
-- Resolve the logical movie or series identity using trustworthy metadata and provider IDs, preferably from an exact torrent-hash match where JacRed enrichment is involved.
-- Use a stable logical series identity to group releases whose source torrent names or internal folder structures differ.
-- Within each Kodi quality root, materialize one `<Show Name> (<Year>)` directory for the logical series, with `Season NN` subdirectories and a `tvshow.nfo`.
-- Do not add a release hash to the normal series-directory name. IDs belong in NFO, not in routine display names.
-- Put each identified episode release into the common series/season directory with a basename containing `SxxEyy`, short torrent hash, and the quality label.
-- Group movies by readable title/year and keep each release as a separate physical item.
-- Preserve the original torrent tree for cases without sufficient identity metadata instead of guessing or inventing IDs.
+- Remove human-readable display-title/name elements from generated NFOs, including movie, series-root, and episode NFOs.
+- Movie NFO: trusted provider IDs + the represented media item's ffprobe stream details + a Combination NFO scraper URL when a trustworthy supported ID is available.
+- `tvshow.nfo`: trusted series IDs + a Combination NFO scraper URL; no human-readable title and no arbitrary episode/file stream details.
+- Episode NFO: ordinary episode XML; trusted IDs, known season/episode coordinates, and that source file's own ffprobe `fileinfo/streamdetails`; no Combination NFO URL.
+- Preserve Kodi Combination NFO URL placement/format supported by the current NFO implementation, updating the format version if the new contract requires it.
+- Do not remove the per-file ffprobe work needed to produce accurate NFOs. The primary video's payload decides torrent quality; each file's own payload describes that file.
+- Add fixtures/assertions proving that title-like fields are omitted and provider IDs/scraper URLs/stream details are kept in the correct NFO types.
 
 **Exit criteria**
 
-- Different releases with the same trusted series ID converge on one Kodi series folder within a quality root.
-- Different episodes and multiple releases of the same episode are distinguishable.
-- Unknown items follow the documented fallback and do not get incorrectly normalized.
+- NFO contains no title/name fields that could override localized scraper results.
+- The Combination URL is present only in movie and series-root NFOs and only when a reliable supported ID exists.
+- Episode NFO has no Combination URL and preserves correct season/episode coordinates and per-file technical information.
+- Kodi and Jellyfin output reuse a valid common NFO representation; there is no speculative output-specific split.
 
-### Phase 4 — Implement the Kodi tree builder as an independent output
+### Phase 3 — Implement logical identity and Kodi path planning
 
 **Work**
 
-- Separate Kodi path planning from Jellyfin path generation; do not rewrite Jellyfin's directory-grouping rules as part of this change.
-- Build the normalized Kodi TV tree: `tv/<quality-root>/<series> (year)/Season NN/`.
-- Build the normalized Kodi movie tree: `movie/<quality-root>/<movie> (year)/`.
-- Write the `.strm` and corresponding sidecar `.nfo` for each managed release item.
-- Keep Elementum playback URIs intact. For TV, preserve the original zero-based FileStats order for `oindex`; do not substitute a sorted filename index or TorrServer `/play` file ID.
-- Retain the current torrent-level Kodi movie playback model unless a specific tested requirement proves it incompatible with the target tree.
-- Use deterministic path sanitization and filename-length handling. The short hash is a presentation aid; lookup and lifecycle decisions use the full manifest identity.
+- Resolve movie/series IDs only from trustworthy metadata; JacRed enrichment must be an exact-hash match.
+- For a known series ID, map torrents and source files for that series into one Kodi series directory per quality root; derive its human-readable name/year from canonical series metadata.
+- For different IDs that collide on the same series name/year, append the namespaced series ID only to resolve that folder collision.
+- For an unknown series ID, use the torrent release title for the torrent-level directory and preserve the original internal file hierarchy. Never group unknown series by textual similarity.
+- For known series with a missing episode number, do not manufacture one. Use the inferred season when possible, otherwise `Season 00`, and preserve the readable source filename.
+- For known movie IDs, group releases by logical movie identity under one readable movie directory per Kodi quality root. For unknown movie IDs, preserve each torrent's source hierarchy instead of guessing from title similarity.
+- Keep source `FileStats.order` separately from sorted/path order; it is both needed for Elementum `oindex` and for the rare collision suffix (displayed ordinal is original order + 1).
+- Plan item basenames so the optional quality label appears before `[short-hash]`; omit the label if unknown. Increase the short hash only when a path collision actually occurs.
 
 **Exit criteria**
 
-- Repeated syncs produce deterministic paths without duplicate folders or overwritten release files.
-- The Kodi series grouping and quality suffixes match the approved examples.
-- Kodi playback URIs and TV `oindex` semantics are unchanged.
-- Jellyfin output paths and grouping pass their regression fixtures unchanged.
+- Multiple releases with the same trusted series/movie ID converge on one logical Kodi folder per quality root.
+- Differently named torrents for the same identified series do not create duplicate series folders.
+- Unknown-identity torrents preserve their own inner hierarchy and are not accidentally merged.
+- Duplicate file mappings for the same episode are handled only by the rare file-ordinal suffix; normal names remain clean.
 
-### Phase 5 — Manifest, reconciliation, and safe transition
+### Phase 4 — Build the Kodi tree independently
 
 **Work**
 
-- Keep independent manifests and root markers for Jellyfin and Kodi.
-- Record enough data to map each managed Kodi path to its full torrent hash and original file identity; never recover source identity by parsing the visible basename.
-- Determine whether the Kodi layout change requires a manifest-version bump or an explicit migration. Do not mix old and new path models silently.
-- Provide a safe transition procedure: dry-run first, back up the current Kodi output/manifest, then perform a controlled one-time rebuild or documented migration.
-- Ensure stale old Kodi paths can be cleaned without invoking any source-torrent removal.
-- Keep Jellyfin reverse-delete detection safe. Program-generated path changes must never be mistaken for user deletion of a managed Jellyfin STRM.
-- Preserve the rule that source torrents disappearing from TorrServer are reflected in all enabled output trees on the next sync.
+- Implement the normalized Kodi TV tree: `tv/<quality-root>/<series> (<year, if known>)/Season NN/` for identified series.
+- Implement the normalized Kodi movie tree: `movie/<quality-root>/<movie> (<year, if known>)/` for identified movies.
+- For unknown identities, keep the torrent-title directory and original torrent internal file structure.
+- Keep readable names; do not routinely put IDs or hashes in series/movie directory names. Use a series ID only to resolve a real series-folder collision; use an eight-character torrent hash in item basenames.
+- For identified TV episodes, produce names like `Series S01E01 — 720p [a1b2c3d4].strm` and the matching `.nfo`. If quality is unknown, omit `— <quality>`. Hash stays after the quality text and before the extension.
+- For identified movie releases, retain the torrent-level Elementum link and use names like `Movie (Year) — 1080p [a1b2c3d4].strm` with matching NFO.
+- Keep `oindex` equal to original zero-based FileStats order for TV; movies remain torrent-level and omit `oindex`.
+- Preserve safe component sanitization, UTF-8 truncation, collision prevention, atomic writes, and playback URI encoding.
+- Do not change Jellyfin's path builder or directory-grouping algorithm. Add regression tests before changing any shared helper that could affect Jellyfin paths.
 
 **Exit criteria**
 
-- Migration/rebuild is idempotent and does not create duplicate managed entries.
-- Removing a Kodi STRM has no source-side effect.
-- Only an explicitly enabled deletion of a tracked Jellyfin STRM can trigger `action=rem`.
+- Repeated syncs create deterministic paths without duplicate directories or overwritten releases.
+- Series grouping, release labels, hash suffix ordering, and fallback structures match the approved examples.
+- Elementum playback URI, movie torrent-level behavior, and TV `oindex` remain correct.
+- Jellyfin output layout and path-building behavior match its pre-change fixtures.
+
+### Phase 5 — Manifest, reconciliation, and clean rebuild
+
+**Work**
+
+- Keep independent Jellyfin/Kodi manifests and root markers. The manifest maps each STRM/NFO to full torrent hash, source path/file identity, and output-relative paths.
+- Make the shared Kodi series/season folder safe under additions, updates, and removals from multiple torrents. A torrent sync must only reconcile that torrent's manifest entries.
+- Never use the visible filename, display quality, short hash, or shared directory name as the authoritative source-torrent identity.
+- Because this is still development and existing trees do not need to be retained, do not implement a directory-tree migration. Use a documented clean rebuild of the dedicated Jellyfin and Kodi output roots and their manifests/root markers.
+- The reset/rebuild procedure must stop the scheduled service/timer and ensure reverse deletion is disabled while old output state is being cleared. Remove only the explicitly configured managed output roots/state, never an arbitrary parent directory. Then recreate markers/manifests and run a fresh sync.
+- After the clean rebuild, verify that missing old paths cannot be interpreted as user-deleted Jellyfin STRMs and cannot remove TorrServer torrents.
+- Keep reverse deletion restricted to the explicitly enabled Jellyfin flow using `action=rem`; Kodi is read-only and `action=drop` is forbidden.
+- Bump the manifest format version if the stored schema/identity mapping changes. No backward path-migration routine is required for the development-tree reset, but malformed/mismatched manifests must still fail safely.
+
+**Exit criteria**
+
+- A clean rebuild is repeatable and does not trigger unintended source-torrent removals.
+- Removing or updating one release removes only its managed entries; other torrents sharing the same series/season folders remain intact.
+- Empty managed directories are cleaned only after the last dependent entry is gone.
+- Kodi STRM deletion has no source-side effect; only an explicitly enabled tracked Jellyfin deletion can invoke `action=rem`.
 - No code path invokes `action=drop`.
 
 ### Phase 6 — Automated tests and integration fixtures
 
 **Work**
 
-- Add unit fixtures for quality-root versus quality-label, including 480p/720p/1080p and HDR examples.
-- Test grouping of the same series across several torrents and different source directory trees.
-- Test multiple releases for the same episode, distinct episodes, multiple movies/releases, path collisions, long Unicode names, and safe filename sanitization.
-- Test missing ffprobe data, exact versus non-matching JacRed hashes, missing provider IDs, and the unidentified-torrent fallback.
-- Test NFO generation/parsing, title omission rules, stream-detail preservation, and NFO-version migration.
-- Test independent manifests, idempotent reconciliation, dry-run behavior, and deletion direction/safety.
-- Add regression tests asserting Jellyfin's existing paths, output semantics, and reverse-delete safeguards remain unchanged.
+- Add regression fixtures for current Jellyfin paths and Kodi playback behavior before changing path generation.
+- Test quality-root versus quality-label with 480p/720p/1080p/1080i/1440p/2160p and HDR/DV examples.
+- Test the fallback ladder: primary ffprobe/cache → structured quality field → release-title markers → unknown; include explicit assertion that unknown uses the `1080p` root and has no quality suffix.
+- Verify that quality is determined from the primary torrent video, while other playable files retain their own per-file stream details in their NFOs and do not change the torrent label.
+- Test two or more releases for one episode, multiple episodes in one release, a rare duplicate logical episode within one torrent, and short-hash collision extension.
+- Test grouping of one series ID across releases with different torrent titles/internal file trees and different series IDs with the same human-readable name/year.
+- Test unknown series/movie IDs: torrent-title directory and original internal file tree remain intact; no ID or entity is invented and no fuzzy merge occurs.
+- Test missing season/episode coordinates without fabricated numbers, including `Season 00` fallback.
+- Test movie-level Elementum STRM without `oindex`, TV file-level STRM with original zero-based `oindex`, and correct encoded playback URLs.
+- Test NFO field allowlists: no title-like fields; movie and series-root Combination NFO URLs only when IDs exist; ordinary episode NFO has no scraper URL; per-file stream details are accurate.
+- Test long Unicode names, sanitization, deterministic output, independent manifests, root markers, idempotent reconciliation, dry-run, and safe clean reset.
+- Test that output path changes or reset cannot be mistaken for user-triggered Jellyfin source removal and that no Kodi code can call TorrServer removal.
 
 **Exit criteria**
 
 - All unit and integration tests pass.
-- No test permits approximate JacRed title matches to override torrent identity.
+- No approximate JacRed title match can override torrent identity.
 - No test permits Kodi-side source deletion or `action=drop`.
+- Jellyfin path/grouping regression tests pass.
 
 ### Phase 7 — Real-player validation, documentation, and release
 
 **Work**
 
-- Test the new Kodi tree on the mini-PC using an isolated/test root first. Rescan the library and verify that each identified series appears as one series entry per quality root.
-- Confirm multiple releases of the same episode remain separately visible and their quality labels can be read without opening technical details.
-- Confirm Kodi obtains localized display names from the configured scraper/provider when NFO does not force a title.
-- Verify that STRM playback still opens the intended Elementum torrent/file.
-- Validate the real Jellyfin scan against the baseline and investigate the NFO stream-detail behavior observed in Phase 2.
-- Update README, architecture, NFO/configuration references, migration instructions, and CHANGELOG as warranted by the final implementation.
-- Bump software/manifest/NFO format versions only when the associated code and migration are ready; do not change versions for this planning-only commit.
+- On the mini-PC, stop the timer/service and use the documented clean reset on the dedicated output roots. Start with reverse deletion disabled.
+- Generate the new Kodi tree and rescan a test Kodi library. Verify one directory per identified series per quality root, visible quality/hash choices, localized scraper names, and correct Elementum playback.
+- Verify that NFO title/name fields are absent and Kodi does not have its localized names overwritten after scraping.
+- Validate Jellyfin playback/scanning and localized naming from IDs; technical ffprobe data may be present in NFO even though Jellyfin does not treat it as the effective stream data.
+- Verify multi-release cleanup, torrent disappearance reflection, and the explicitly enabled Jellyfin reverse-delete path separately. Never test by enabling reverse deletion during a clean reset.
+- Update README, architecture, configuration/NFO references and CHANGELOG to reflect shipped behavior.
+- Update software, manifest, and NFO format versions only alongside the corresponding implementation and tests. No version number changes are part of this planning update.
 
 **Exit criteria**
 
-- Kodi, Jellyfin, metadata, and reverse-delete checks pass on the real mini-PC.
-- Upgrade/rebuild instructions are complete and have been followed successfully on a test root.
-- Release notes distinguish changed Kodi tree behavior from unchanged Jellyfin behavior.
+- Kodi and Jellyfin real-player checks pass on the mini-PC.
+- A clean rebuild and follow-up sync work without duplicate entries or unintended torrent removal.
+- Release notes clearly distinguish the new Kodi tree from the unchanged Jellyfin folder/grouping logic.
 
 ## 5. Explicit non-goals
 
-- Do not redesign Jellyfin's existing directory-grouping behavior as part of Kodi normalization.
-- Do not add more quality-root categories: the only roots remain `4K` and `1080p`.
-- Do not merge different torrent releases into one STRM or discard a release because another release maps to the same episode.
-- Do not run/install local ffprobe from torr2strm; technical probing continues through TorrServer's ffprobe endpoint.
-- Do not use title similarity as proof of torrent identity.
-- Do not make Kodi output authoritative for deletion.
-- Do not implement or use TorrServer `action=drop`.
+- Do not redesign Jellyfin's existing path/grouping behavior as part of Kodi normalization.
+- Do not add more quality-root categories: only `4K` and `1080p` exist.
+- Do not infer a release's resolution from codec or source tokens alone.
+- Do not probe every episode solely for quality classification; retain per-file probes only as required for truthful per-file NFO stream details.
+- Do not merge releases using approximate title similarity or invent missing provider IDs/season/episode numbers.
+- Do not run/install local ffprobe from torr2strm; ffprobe requests continue through TorrServer.
+- Do not make Kodi output authoritative for deletion and do not implement/use `action=drop`.
 - Do not include `hotcached` work in this roadmap.
 
 ## 6. Definition of done
 
-The work is complete only when the Kodi tree is normalized and human-readable; each series is represented by one directory per quality root; per-release quality and short-hash labels are visible; NFO retains verified technical data and trustworthy IDs; unidentified content remains safe; manifests remain authoritative; synchronization is deterministic; real Kodi and Jellyfin behavior has been checked; and all Jellyfin path/grouping and deletion-safety invariants remain intact.
+The work is complete when the independent Kodi tree groups identified releases by stable IDs; unknown items preserve their source layout; quality root and label follow the approved fallback ladder based on the primary video file; per-file NFOs retain their own technical data without display-title fields; multiple releases remain distinct and human-readable; manifests reconcile shared folders safely; the clean rebuild is verified; Kodi/Elementum playback works; and Jellyfin's existing path/grouping behavior and deletion-safety invariants remain intact.
 
 ## 7. Current status
 
-- [ ] Phase 0 — Freeze the behavior contract
-- [ ] Phase 1 — Separate quality-root from per-item quality
-- [ ] Phase 2 — Validate and finalize the NFO contract
-- [ ] Phase 3 — Define logical identity and Kodi series grouping
-- [ ] Phase 4 — Implement the Kodi tree builder
-- [ ] Phase 5 — Manifest, reconciliation, and safe transition
+- [x] Phase 0 — Behavior decisions finalized (planning only; fixtures still need implementation)
+- [ ] Phase 1 — Torrent-level quality resolution
+- [ ] Phase 2 — Agreed NFO contract
+- [ ] Phase 3 — Logical identity and Kodi path planning
+- [ ] Phase 4 — Independent Kodi tree builder
+- [ ] Phase 5 — Manifest, reconciliation, and clean rebuild
 - [ ] Phase 6 — Automated tests and integration fixtures
 - [ ] Phase 7 — Real-player validation, documentation, and release
 
-This roadmap is a planning artifact only. No source code, runtime behavior, configuration defaults, or version numbers are changed by adding it.
+This roadmap update records approved decisions only. It does not modify source code, runtime behavior, configuration defaults, or software versions.
