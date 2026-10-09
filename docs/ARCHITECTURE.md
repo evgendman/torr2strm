@@ -38,7 +38,7 @@ Category resolution remains unchanged:
 
 The quality root has only two values:
 
-- `4K` when the primary eligible video's `max(width, height) >= 2160`;
+- `4K` when the primary eligible video's `max(width, height) >= 3840`;
 - `1080p` for everything else, including unknown quality.
 
 The primary eligible video is the largest playable video file, with path as deterministic tie-breaker. One root and one display quality label are used for the whole torrent. We do not call ffprobe separately on each episode just to classify it, but retain per-file ffprobe requests when needed to write truthful stream data to the matching NFO.
