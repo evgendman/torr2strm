@@ -2213,7 +2213,8 @@ class OutputRunner:
             if normalized_tv:
                 for file in video_files:
                     coords = source_episode_coordinates(file.path, snap.title)
-                    duplicate_groups.setdefault(coords, []).append(file)
+                    if coords[0] is not None and coords[1] is not None:
+                        duplicate_groups.setdefault(coords, []).append(file)
             for file in video_files:
                 if normalized_tv:
                     season, episode = source_episode_coordinates(file.path, snap.title)
@@ -2221,9 +2222,13 @@ class OutputRunner:
                         season = self.tv_unmatched_season
                         LOG.warning("SEASON_FALLBACK output=kodi hash=%s file=%s season=%02d", snap.hash, file.path, season)
                     target_dir = safe_join(torrent_dir, f"Season {season:02d}")
-                    leaf = self._kodi_episode_basename(
-                        snap, file, duplicate=len(duplicate_groups.get(source_episode_coordinates(file.path, snap.title), [])) > 1
+                    coords = source_episode_coordinates(file.path, snap.title)
+                    duplicate = (
+                        coords[0] is not None
+                        and coords[1] is not None
+                        and len(duplicate_groups.get(coords, [])) > 1
                     )
+                    leaf = self._kodi_episode_basename(snap, file, duplicate=duplicate)
                 else:
                     # Unknown identity: retain the source torrent's internal hierarchy.
                     target_dir = safe_join(torrent_dir, *PurePosixPath(file.path).parent.parts)
