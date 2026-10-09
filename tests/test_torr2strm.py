@@ -136,6 +136,22 @@ def torrent(h="a" * 40, title="Film", category="movie", paths=None, lengths=None
     }
 
 
+
+
+def nfo_root_element(text):
+    """Parse the XML root, excluding a trailing Kodi Combination NFO URL."""
+    import re
+    import xml.etree.ElementTree as ET
+    end = re.search(r"</(?:movie|episodedetails|tvshow)>", text)
+    assert end is not None
+    return ET.fromstring(text[:end.end()])
+
+
+def assert_no_display_title_fields(text):
+    root = nfo_root_element(text)
+    for tag in ("title", "originaltitle", "sorttitle", "showtitle", "name", "year", "premiered", "releasedate", "aired"):
+        assert root.find(tag) is None, f"unexpected display/localization field {tag!r} in NFO root"
+
 def probe(width=1920, height=1080, codec="h264", audio=True, hdr=None):
     video = {
         "index": 0,
@@ -371,13 +387,10 @@ def test_provider_ids_and_base_metadata_are_written_to_nfo():
         assert '<uniqueid type="trakt">5678</uniqueid>' in text
         assert "<season>1</season>" in text
         assert "<episode>1</episode>" in text
-        assert "<title>" not in text
-        assert "<showtitle>" not in text
-        assert "<originaltitle>" not in text
+        assert_no_display_title_fields(text)
         tvshow = next((jr / "tv" / "1080p").rglob("tvshow.nfo"))
         tvshow_text = tvshow.read_text(encoding="utf-8")
-        assert "<title>" not in tvshow_text
-        assert "<premiered>" not in tvshow_text
+        assert_no_display_title_fields(tvshow_text)
         assert "<width>1920</width>" in tvshow_text
         assert "<height>1080</height>" in tvshow_text
         assert nfo_format_version(tvshow_text) == 3
@@ -482,7 +495,7 @@ def test_legacy_nfo_is_rewritten_to_allowed_fields_and_gets_tmdb_url():
     assert changed
     assert nfo_format_version(migrated) == 3
     assert "<tag>USER_NOTE</tag>" not in migrated
-    assert "<title>" not in migrated
+    assert_no_display_title_fields(migrated)
     assert "<year>" not in migrated
     assert "<fileinfo><streamdetails><video>" in migrated
     assert '<torr2strm formatversion="3"' in migrated
@@ -517,7 +530,7 @@ def test_normal_sync_migrates_legacy_nfos_without_reprobing():
         for path in nfos:
             text = path.read_text(encoding="utf-8")
             assert nfo_format_version(text) == 3
-            assert "<title>" not in text
+            assert_no_display_title_fields(text)
             assert text.rstrip().endswith("https://www.themoviedb.org/movie/1124")
 
 
@@ -537,8 +550,7 @@ def test_nfo_is_identical_between_enabled_outputs_and_contains_hdr_and_streamdet
         kd_nfo = next((kr / "movie" / "4K").rglob("*.nfo"))
         assert jf_nfo.read_text(encoding="utf-8") == kd_nfo.read_text(encoding="utf-8")
         text = jf_nfo.read_text(encoding="utf-8")
-        assert "<title>" not in text
-        assert "<originaltitle>" not in text
+        assert_no_display_title_fields(text)
         assert "<tmdbid>1124</tmdbid>" in text
         assert "<imdbid>tt0482571</imdbid>" in text
         assert "<hdrtype>dolbyvision</hdrtype>" in text
@@ -567,7 +579,7 @@ def test_kodi_groups_identified_series_by_id_and_keeps_releases_separate():
         tvshow_nfo = kr / "tv" / "1080p" / "Canonical Series (2024)" / "tvshow.nfo"
         assert tvshow_nfo.is_file()
         assert "<width>1280</width>" in tvshow_nfo.read_text(encoding="utf-8")
-        assert "<title>" not in tvshow_nfo.read_text(encoding="utf-8")
+        assert_no_display_title_fields(tvshow_nfo.read_text(encoding="utf-8"))
         assert not list(kr.rglob("Different.Release.Name*"))
         assert not list(kr.rglob("Other.Release.Name*"))
 
