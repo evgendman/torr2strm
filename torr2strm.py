@@ -1502,11 +1502,13 @@ class JacRedClient:
 
     def __init__(self, cfg: dict[str, Any]):
         self.base_url = str(cfg.get("url", "")).strip().rstrip("/")
-        self.api_key = str(cfg.get("api_key", "")).strip()
+        self.api_key = str(cfg.get("api_key", "")).strip()  # Legacy Prowlarr-era option; public JacRed v2 does not require it.
+        if self.api_key:
+            LOG.warning("JACRED_API_KEY_IGNORED direct JacRed v2 API does not use the configured api_key")
         self.indexer_id = int(cfg.get("indexer_id", 0))  # Legacy Prowlarr-only setting; unused by native Torznab.
         if self.indexer_id > 0:
             LOG.warning("JACRED_INDEXER_ID_IGNORED value=%s; direct public JacRed Torznab searches all trackers", self.indexer_id)
-        self.limit = int(cfg.get("limit", 100))
+        self.limit = int(cfg.get("limit", 1000))
         self.timeout_sec = float(cfg.get("timeout_sec", 10))
         self.retries = int(cfg.get("retries", 0))
         self._cache: dict[tuple[str, str, int, int], list[dict[str, Any]]] = {}
@@ -3049,7 +3051,7 @@ def load_config(path: Path) -> dict[str, Any]:
     if jacred_url and not jacred_url.startswith(("http://", "https://")):
         raise ValueError("[jacred].url must start with http:// or https://")
     jacred_indexer_id = int(jacred_cfg.get("indexer_id", 0))
-    jacred_limit = int(jacred_cfg.get("limit", 100))
+    jacred_limit = int(jacred_cfg.get("limit", 1000))
     if jacred_limit < 1 or jacred_limit > 1000:
         raise ValueError("[jacred].limit must be between 1 and 1000")
     jacred_timeout = float(jacred_cfg.get("timeout_sec", 10))
