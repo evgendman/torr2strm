@@ -7,7 +7,7 @@
 - Separated the two-value quality root (`4K` / `1080p`) from the visible per-release quality label. Quality falls back from primary-file ffprobe/cache to structured metadata, explicit release-title markers, and unknown.
 - Preserved per-file ffprobe collection for accurate sidecar NFO stream details while classifying a torrent from its primary eligible video only.
 - Changed Kodi item basenames to show the quality label before the short torrent hash; unknown quality has no quality label.
-- Changed generated NFOs to omit all title/name fields; movie and series-root NFOs keep IDs/Combination URLs, and episode NFOs keep IDs/coordinates and per-file stream details without a scraper URL.
+- Changed generated NFOs to omit all title/name fields; movie and series-root NFOs keep IDs/Combination URLs and streamdetails, and episode NFOs keep IDs/coordinates and exact per-file stream details without a scraper URL. Kodi's shared `tvshow.nfo` uses one deterministic representative release per quality root.
 - Added manifest v5 and safer Kodi shared-folder reconciliation; only no-longer-referenced managed files are removed, shared directories are pruned only when empty, and Kodi remains read-only.
 - Bumped NFO format to v3. Existing development trees are intended to be cleaned and rebuilt instead of migrated.
 
