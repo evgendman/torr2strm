@@ -1507,7 +1507,7 @@ def parse_torznab_results(raw: bytes | str) -> list[dict[str, Any]]:
 
 
 class JacRedClient:
-    """Optional metadata provider using JacRed's Prowlarr Search Feed."""
+    """Optional metadata provider using JacRed's public Torznab XML endpoint."""
 
     def __init__(self, cfg: dict[str, Any]):
         self.base_url = str(cfg.get("url", "")).strip().rstrip("/")
@@ -3085,7 +3085,7 @@ def main() -> int:
     group.add_argument("--jacred", metavar="URL", help="override configured JacRed base URL for this run")
     group.add_argument("--no-jacred", action="store_true", help="disable JacRed for this run")
     parser.add_argument("--jacred-api-key", metavar="KEY", help="override configured JacRed API key")
-    parser.add_argument("--jacred-indexer-id", type=int, help="override JacRed indexer ID; 0 means all indexers")
+    parser.add_argument("--jacred-indexer-id", type=int, help="deprecated legacy option; ignored by direct public JacRed Torznab API")
     parser.add_argument("--jacred-limit", type=int, help="override JacRed result limit")
     try:
         args = parser.parse_args()
@@ -3111,7 +3111,7 @@ def main() -> int:
         )
         jacred = JacRedClient(cfg["jacred"])
         if jacred.enabled:
-            LOG.info("JACRED_ENABLED url=%s indexer_id=%s limit=%s", jacred.base_url, jacred.indexer_id, jacred.limit)
+            LOG.info("JACRED_ENABLED url=%s limit=%s api_key_configured=%s", jacred.base_url, jacred.limit, bool(jacred.api_key))
         else:
             LOG.info("JACRED_DISABLED")
         return SyncCoordinator(cfg, client, jacred, dry_run=args.dry_run).run()
