@@ -76,7 +76,7 @@ These decisions are settled and should not be reopened during implementation unl
 
 22. **No human-readable title/name fields are written to NFO.** In particular, do not write `title`, `originaltitle`, `sorttitle`, `showtitle`, or equivalent display-name fields. Kodi's observed post-scrape title replacement makes these fields unsuitable; Jellyfin should also find localized names via provider IDs.
 23. A movie NFO is a Combination NFO containing trusted provider identifiers, technical stream data for its represented media item, and a scraper URL when a trustworthy supported ID is available. Do not add a title/name merely to make the XML look complete.
-24. `tvshow.nfo` is a Combination NFO containing trusted series identifiers and the scraper URL. Because it represents a logical series rather than one particular video file, do not attach arbitrary per-file ffprobe details to this series-level NFO.
+24. `tvshow.nfo` is a Combination NFO containing trusted series identifiers, the scraper URL, and technical `fileinfo/streamdetails` copied from the deterministic representative release selected for that quality root. This representative profile does not replace each episode sidecar NFO, which must retain that episode file's own ffprobe data.
 25. An episode NFO uses the ordinary episode NFO format, contains trusted identifiers and the season/episode coordinates when known, and retains the ffprobe stream details for that exact source file. It does not contain a Combination NFO scraper URL.
 26. Keep only values supported by source metadata or ffprobe. No IDs, years, episode numbers, names, or stream characteristics may be invented. The existing per-file ffprobe/NFO behavior stays in place even though the torrent's root and quality label are decided by its primary video file.
 27. Keep a single compatible NFO contract for both output trees unless implementation tests demonstrate a real format incompatibility. Jellyfin may ignore NFO stream details, but that is not a reason to discard technically correct data that Kodi can use.
@@ -135,7 +135,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 
 - Remove human-readable display-title/name elements from generated NFOs, including movie, series-root, and episode NFOs.
 - Movie NFO: trusted provider IDs + the represented media item's ffprobe stream details + a Combination NFO scraper URL when a trustworthy supported ID is available.
-- `tvshow.nfo`: trusted series IDs + a Combination NFO scraper URL; no human-readable title and no arbitrary episode/file stream details.
+- `tvshow.nfo`: trusted series IDs + Combination NFO scraper URL + streamdetails from the deterministic representative release in that quality root; no human-readable title.
 - Episode NFO: ordinary episode XML; trusted IDs, known season/episode coordinates, and that source file's own ffprobe `fileinfo/streamdetails`; no Combination NFO URL.
 - Preserve Kodi Combination NFO URL placement/format supported by the current NFO implementation, updating the format version if the new contract requires it.
 - Do not remove the per-file ffprobe work needed to produce accurate NFOs. The primary video's payload decides torrent quality; each file's own payload describes that file.
@@ -143,7 +143,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 
 **Exit criteria**
 
-- NFO contains no title/name fields that could override localized scraper results.
+- NFO contains no title/name fields that could override localized scraper results. Series-root Combination NFOs have representative streamdetails, while episode sidecars retain exact per-file streamdetails.
 - The Combination URL is present only in movie and series-root NFOs and only when a reliable supported ID exists.
 - Episode NFO has no Combination URL and preserves correct season/episode coordinates and per-file technical information.
 - Kodi and Jellyfin output reuse a valid common NFO representation; there is no speculative output-specific split.
@@ -223,7 +223,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Test unknown series/movie IDs: torrent-title directory and original internal file tree remain intact; no ID or entity is invented and no fuzzy merge occurs.
 - Test missing season/episode coordinates without fabricated numbers, including `Season 00` fallback.
 - Test movie-level Elementum STRM without `oindex`, TV file-level STRM with original zero-based `oindex`, and correct encoded playback URLs.
-- Test NFO field allowlists: no title-like fields; movie and series-root Combination NFO URLs only when IDs exist; ordinary episode NFO has no scraper URL; per-file stream details are accurate.
+- Test NFO field allowlists: no title-like fields; movie and series-root Combination NFO URLs only when IDs exist; ordinary episode NFO has no scraper URL; representative series-root and exact per-file stream details are preserved.
 - Test long Unicode names, sanitization, deterministic output, independent manifests, root markers, idempotent reconciliation, dry-run, and safe clean reset.
 - Test that output path changes or reset cannot be mistaken for user-triggered Jellyfin source removal and that no Kodi code can call TorrServer removal.
 
