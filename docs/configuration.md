@@ -85,7 +85,7 @@ python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-ru
 | `--jacred` | `URL` | Override `[jacred].url` for this invocation; use a base URL such as `https://jac.red`, not the full endpoint path. |
 | `--no-jacred` | none | Disable JacRed enrichment for this invocation. |
 | `--jacred-api-key` | `KEY` | Override `[jacred].api_key` for this invocation. |
-| `--jacred-indexer-id` | integer | Override `[jacred].indexer_id`; `0` means all indexers. |
+| `--jacred-indexer-id` | integer | Deprecated compatibility option; ignored by the direct public JacRed Torznab API. |
 | `--jacred-limit` | integer | Override `[jacred].limit`; must be in the range `1`–`1000`. |
 
 `--jacred` and `--no-jacred` are mutually exclusive. CLI overrides are in-memory only and are not persisted to the TOML file.
