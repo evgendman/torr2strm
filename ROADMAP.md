@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Status: planning baseline established; implementation not yet started.** This roadmap records the agreed behavior contract and implementation sequence. It does not implement or authorize code changes by itself.
+> **Status: v1.4.0 implementation candidate committed to `main`.** Code, tests, and documentation have been updated. Automated test execution is not independently confirmed by the available GitHub status interface, and real-player validation on the mini-PC remains pending.
 > Baseline: repository release `v1.3.2`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -270,12 +270,12 @@ The work is complete when the independent Kodi tree groups identified releases b
 ## 7. Current status
 
 - [x] Phase 0 — Behavior decisions finalized (planning only; fixtures still need implementation)
-- [ ] Phase 1 — Torrent-level quality resolution
-- [ ] Phase 2 — Agreed NFO contract
-- [ ] Phase 3 — Logical identity and Kodi path planning
-- [ ] Phase 4 — Independent Kodi tree builder
-- [ ] Phase 5 — Manifest, reconciliation, and clean rebuild
-- [ ] Phase 6 — Automated tests and integration fixtures
-- [ ] Phase 7 — Real-player validation, documentation, and release
+- [x] Phase 1 — Torrent-level quality resolution implemented
+- [x] Phase 2 — Title-free NFO contract implemented
+- [x] Phase 3 — Logical identity and Kodi path planning implemented
+- [x] Phase 4 — Independent Kodi tree builder implemented
+- [x] Phase 5 — Manifest reconciliation and clean-rebuild path implemented
+- [~] Phase 6 — 25 regression tests authored/updated; execution result not confirmed
+- [ ] Phase 7 — Real-player validation on the mini-PC and release tagging
 
-This roadmap update records approved decisions only. It does not modify source code, runtime behavior, configuration defaults, or software versions.
+This status records the implementation candidate, not a verified production release. Do not tag or treat v1.4.0 as production-approved until the test suite and real Kodi/Jellyfin checks pass.
