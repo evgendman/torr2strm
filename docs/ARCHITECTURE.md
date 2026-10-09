@@ -4,23 +4,23 @@
 
 TorrServer is the source of truth for torrent membership, info hash and FileStats. A synchronization pass loads the torrent and its files, optionally enriches with an exact-hash JacRed result, resolves per-file media information, determines one torrent-level quality root/label from the primary eligible video, then reconciles independent Jellyfin and Kodi/Elementum projections.
 
-```text
+\`\`\`text
 TorrServer torrent list + FileStats
         ↓
 optional JacRed search + exact BTIH/infoHash validation
         ↓
-resolve category and trustworthy provider IDs
+reuse valid NFO / read already-present ffprobe payloads
         ↓
-reusable NFO → exact JacRed ffprobe → TorrServer /ffp/ for primary file
-        ↓ if primary ffprobe unavailable
-structured quality field → explicit release-title quality markers → unknown
+read all structured quality claims + explicit release-title markers
         ↓
-quality_root (4K / 1080p) + quality_label (480p / 720p / 1080p / 2160p HDR / ...)
+if ANY source proves 4K → quality_root=4K; otherwise quality_root=1080p
         ↓
-per-file ffprobe as needed for each file's own NFO
+choose display quality label by source priority; unknown → no suffix
         ↓
-Jellyfin output (existing path/grouping behavior) + normalized Kodi output
-```
+write STRM + NFO (streamdetails only if already available)
+        ↓
+Jellyfin output (existing paths) + normalized Kodi output
+\`\`\`
 
 ## JacRed matching and identity
 
@@ -41,18 +41,21 @@ The quality root has only two values:
 - `4K` when the primary eligible video's `max(width, height) >= 3840`;
 - `1080p` for everything else, including unknown quality.
 
-The primary eligible video is the largest playable video file, with path as deterministic tie-breaker. One root and one display quality label are used for the whole torrent. We do not call ffprobe separately on each episode just to classify it, but retain per-file ffprobe requests when needed to write truthful stream data to the matching NFO.
+Quality resolution performs no ffprobe work. It reads only pre-existing ffprobe payloads (including valid cached NFO data) and structured/title evidence. The root is `4K` if any available candidate source explicitly indicates 4K-class resolution; otherwise it is `1080p`. This includes cases where another source reports a lower resolution. The display label follows source priority independently.
 
 ## Quality-label fallback
 
 The root and display label are independent. A 720p or 480p item may live under `1080p`, and a release with unknown quality also lives under `1080p` but receives no quality suffix.
 
-Resolution/display label priority:
+Display-label priority:
 
-1. Real primary-file ffprobe stream dimensions and HDR/DV indicators (or valid cached NFO stream details for that exact file).
-2. Structured quality/resolution fields from TorrServer metadata or a hash-exact JacRed match.
-3. Explicit quality markers in the torrent title.
-4. Unknown.
+1. Valid cached NFO stream details for the exact source file, if available.
+2. ffprobe JSON already included in an exact-hash JacRed result or torrent/release metadata.
+3. Structured quality/resolution fields in TorrServer metadata or a hash-exact JacRed result.
+4. Explicit quality markers in the release title.
+5. Unknown.
+
+The root does not simply use the first label: it scans all available evidence and chooses `4K` if any candidate explicitly indicates 4K-class resolution; only absence of such evidence selects `1080p`.
 
 Explicit labels are normalized (for example, `480p`, `720p`, `1080p`, `1080i`, `1440p`, `2160p`, `2160p HDR`, `2160p DV`). Source/codec tokens such as `WEB-DL`, `BluRay`, `HEVC`, or `HD` do not establish resolution by themselves. Unknown label means no quality suffix in the basename, not a claim that the media is 1080p.
 
@@ -94,7 +97,7 @@ No human-readable display title/name fields are written to any NFO. This is inte
 - Movie NFO: trusted IDs, per-file ffprobe stream details, and a Combination NFO scraper URL when a trustworthy TMDb ID is available.
 - `tvshow.nfo`: trusted series IDs, Combination NFO URL, and streamdetails copied from the deterministic representative release for that quality root; no title. Each episode sidecar NFO retains its own exact source-file streamdetails.
 - Episode NFO: ordinary episode NFO, trusted IDs, known season/episode coordinates, and stream details from that exact source file; no Combination URL.
-- If ffprobe is unavailable, the synchronizer still creates the STRM and an identity-only NFO. That NFO is not treated as a technical-data cache.
+- If technical ffprobe data is not already present in the exact release payload or a valid cached NFO, the synchronizer still creates the STRM and an identity-only NFO. It never contacts TorrServer `/ffp/` and does not perform local probing.
 
 NFO format is v3. It is distinct from software/manifest versions. Current development trees are cleaned and rebuilt; no physical directory-tree migration is performed. If an older NFO is encountered through manifest-based cache reuse, title-like fields are removed during format upgrade.
 
