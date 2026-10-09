@@ -1,4 +1,4 @@
-# torr2strm v1.4.0
+# torr2strm v1.4.1
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -98,42 +98,30 @@ An exact JacRed result can provide:
 
 JacRed cannot change the category when TorrServer already supplies a non-empty category. Anime remains `_uncategorized`.
 
-### Where ffprobe data comes from
+### Quality classification without new ffprobe requests
 
-`torr2strm` does **not** execute a local `ffprobe` process and does not install or configure the binary. It reads JSON returned by the TorrServer HTTP API:
+\torr2strm does **not** run local ffprobe and does **not** call TorrServer's \`/ffp/{hash}/{file_id}\` endpoint. This intentionally avoids probing every new movie/episode just to decide which of the two output roots it belongs in.
 
-```text
-GET /ffp/{hash}/{file_id}
-```
+Only data that is already available is considered:
 
-TorrServer must itself have a working, available `ffprobe` binary and its `/ffp/{hash}/{file_id}` endpoint must be reachable from torr2strm. TorrServer documents `GET /ffp/status` as the ffprobe-availability check. For a local instance, for example:
+1. A valid NFO already tracked for this exact torrent file, if present.
+2. ffprobe JSON already attached to a hash-exact JacRed release result or embedded in torrent/release metadata.
+3. Explicit structured quality/resolution fields in TorrServer metadata or an exact-hash JacRed result.
+4. Explicit resolution/interlace/HDR/Dolby Vision markers in the release title.
 
-```bash
-curl -i http://127.0.0.1:8097/ffp/status
-```
+A metadata field or release title cannot establish quality from source/codec words alone: \`WEB-DL\`, \`BluRay\`, \`HEVC\` and \`HD\` are not proof of a particular resolution. An exact JacRed hash match is required before its ffprobe or quality fields may be used.
 
-Use the actual TorrServer base URL and port configured on your host. The torr2strm configuration currently has no TorrServer HTTP-authentication fields, so its API endpoints must be accessible to the process without credentials that only a browser supplies.
+#### Quality root and display label are separate
 
-Media-info priority:
+There are only two roots: \`4K\` and \`1080p\`. The root uses an affirmative-evidence rule: **if any available source supplies evidence of 4K-class resolution, the torrent goes into \`4K\`; otherwise it goes into \`1080p\`**. A lower-quality value from one source does not cancel a 4K claim found in another source.
 
-```text
-valid reusable NFO in either output tree
-        ↓ if missing or unusable
-exact JacRed hash match with a usable ffprobe payload
-        ↓ if missing or unusable
-TorrServer GET /ffp/{hash}/{file_id}
-```
+The display label is selected from the highest-priority available evidence, in the order listed above. For example, a cached ffprobe label of \`720p\` and a release title containing \`2160p\` can produce a \`4K\` root but retain \`720p\` as the display label. The root is a grouping/access branch, not a promise that every release in it is actually 4K.
 
-The primary eligible video file (largest playable video by size, with path as a stable tie-breaker) determines one quality root and one quality label for the entire torrent. Do not probe every episode merely to classify quality; the existing per-file probe work is retained when needed to place accurate stream details in each file's NFO.
+If no source contains a usable quality value, the item goes to \`1080p\` and its basename has **no quality suffix**. Unknown quality is never relabelled as \`1080p\` merely because it lives in that root.
 
-Quality-resolution priority:
+When an existing ffprobe payload is available for the release, its technical stream details may be written into the matching primary-file NFO. Existing per-file NFOs are reused when valid. If no ffprobe data already exists for an item, torr2strm writes the NFO's identity fields only; it does not probe the media to fill in stream details.
 
-1. Real ffprobe data for the primary video file, including a valid cached NFO for that exact source file.
-2. An explicit structured quality/resolution field from TorrServer metadata or an exact-hash JacRed result.
-3. Explicit resolution/interlace/HDR/Dolby Vision markers in the torrent release title.
-4. Unknown quality.
-
-The root is always either `4K` (primary dimensions with max(width, height) >= 3840) or `1080p` (everything else, including unknown quality). The display label is independent: for example, a 720p torrent is stored under the `1080p` root but its Kodi item name says `720p`. If quality is unknown, the root is `1080p` and the name has no quality suffix. Codec/source tokens such as `WEB-DL`, `BluRay`, `HEVC` or `HD` alone are not treated as a resolution.
+Legacy \`[quality]\` timeout/retry settings may remain in an existing TOML file, but v1.4.1 no longer uses them and no ffprobe binary or \`/ffp/status\` check is required.
 
 ## Magnet handling for Kodi
 
@@ -151,15 +139,15 @@ For TV the `oindex` value is the zero-based original FileStats order, not the on
 
 NFOs contain only reliable identifiers and technical stream data. They deliberately do not contain human-readable display names: Kodi was observed to replace its localized scraper title with the NFO title after scraping, and Jellyfin should retrieve localized names from provider IDs.
 
-- **Movie sidecar NFO:** trusted provider IDs, ffprobe stream details for the specific movie media item, and a Kodi Combination NFO scraper URL when a trustworthy TMDb ID is available.
-- **Series-root `tvshow.nfo`:** trusted series IDs, a Combination NFO scraper URL when a trustworthy TMDb ID is available, and `fileinfo/streamdetails` copied from a deterministic representative release in that quality root. No display title is written. The episode sidecar NFO remains the authoritative technical profile for its specific file.
-- **Episode sidecar NFO:** ordinary `episodedetails` format, trusted IDs, known season/episode coordinates, and ffprobe stream details for the exact source file. No Combination NFO URL.
+- **Movie sidecar NFO:** trusted provider IDs, stream details only when already available in a matching release ffprobe payload or cached NFO, and a Kodi Combination NFO scraper URL when a trustworthy TMDb ID is available.
+- **Series-root `tvshow.nfo`:** trusted series IDs, a Combination NFO scraper URL when a trustworthy TMDb ID is available, and `fileinfo/streamdetails` from a deterministic representative release only when those details were already available. No display title is written.
+- **Episode sidecar NFO:** ordinary `episodedetails` format, trusted IDs and known season/episode coordinates; include stream details only from an already-available matching source or cached NFO. No Combination NFO URL.
 - **No NFO type writes** `title`, `originaltitle`, `sorttitle`, `showtitle`, `name`, year/date display metadata, or any other human-facing title field.
-- Per-file ffprobe details remain tied to their own STRM/NFO. The primary file determines torrent-level quality only; it does not replace the episode/file technical details.
+- Any pre-existing per-file ffprobe details remain tied to their own STRM/NFO. torr2strm does not run additional per-file probes; where data is unavailable, the NFO remains identity-only.
 
 Useful video/audio/subtitle stream fields include codec, bitrate, dimensions, aspect ratio, frame rate, scan type, bit depth, HDR type, stereomode, audio language/channels/sampling rate, and subtitle codec/language/title flags when available.
 
-A valid reusable NFO may be copied between output trees for the same source file so another ffprobe call can be avoided. Jellyfin may read the stream details but does not necessarily use them as its effective stream information; their retention is still useful to Kodi and other consumers.
+A valid reusable NFO may be copied between output trees for the same source file. No replacement ffprobe call is made when it is missing. Jellyfin may read the stream details but does not necessarily use them as its effective stream information; their retention is still useful to Kodi and other consumers.
 
 ### NFO format and clean rebuild
 
