@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Status: v1.4.2 candidate committed to `main`; CI verified.** Python compilation and all 31 regression tests passed. Real-player validation on the mini-PC remains pending.
+> **Status: v1.4.2 candidate committed to `main`; CI verified.** Python compilation and all 33 regression tests passed. Real-player validation on the mini-PC remains pending.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
