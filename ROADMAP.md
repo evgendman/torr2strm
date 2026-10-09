@@ -1,7 +1,7 @@
 # torr2strm Development Roadmap
 
-> **Status: v1.4.0 implementation candidate committed to `main`.** Code, tests, and documentation have been updated. Automated test execution is not independently confirmed by the available GitHub status interface, and real-player validation on the mini-PC remains pending.
-> Baseline: repository release `v1.3.2`.
+> **Status: v1.4.1 implementation candidate in progress.** Quality classification is metadata-only; no ffprobe requests are performed. CI verification and mini-PC playback validation are pending.
+> Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
 ## 1. Goal
