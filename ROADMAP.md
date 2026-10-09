@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Status: v1.4.2 candidate committed to `main`; CI verified.** Python compilation and all 33 regression tests passed. Real-player validation on the mini-PC remains pending.
+> **Status: v1.4.3 candidate in progress; direct JacRed Torznab integration implemented.** Python compilation and all 36 regression tests passed. Real-player validation on the mini-PC remains pending.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -271,7 +271,7 @@ The work is complete when the independent Kodi tree groups identified releases b
 - [x] Phase 3 — Logical identity and Kodi path planning implemented
 - [x] Phase 4 — Independent Kodi tree builder implemented
 - [x] Phase 5 — Manifest reconciliation and clean-rebuild path implemented
-- [x] Phase 6 — 33 regression tests pass in GitHub Actions (Python 3.13)
+- [x] Phase 6 — 36 regression tests pass in GitHub Actions (Python 3.13)
 - [ ] Phase 7 — Real-player validation on the mini-PC and release tagging
 
 This status records a CI-verified implementation candidate, not a production-approved release. Do not tag or treat v1.4.2 as production-approved until the new tree has been checked in Kodi and Jellyfin on the mini-PC.
