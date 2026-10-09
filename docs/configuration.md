@@ -54,14 +54,14 @@ Quality decision rules:
 
 | Parameter | Default | Meaning |
 |---|---:|---|
-| `url` | `https://jac.red` in the example; empty disables JacRed | Base URL of the JacRed/Prowlarr-compatible search service, not a release-page URL. torr2strm appends `/api/v1/search`. |
-| `api_key` | empty | Optional API key sent as `X-Api-Key`. |
-| `indexer_id` | `1` in the example; code default `0` | Indexer ID filter. A value greater than `0` is passed as `indexerIds`; `0` means search all indexers. |
+| `url` | `http://127.0.0.1:9696` in the example; empty disables enrichment | Base URL of the local Prowlarr REST API, without `/api/v1/search`. It is not the public JacRed Torznab URL. torr2strm appends `/api/v1/search`. |
+| `api_key` | required for normal Prowlarr API access | API key from Prowlarr → Settings → General, sent as `X-Api-Key`. Keep it secret. |
+| `indexer_id` | `0` in the example; code default `0` | Prowlarr's internal numeric ID for the configured JacRed indexer. Find it from `GET /api/v1/indexer`; `0` searches all configured indexers. |
 | `limit` | `100` | Maximum result count per search request. Allowed range: `1`–`1000`. |
 | `timeout_sec` | `10` | HTTP timeout per JacRed search request. Must be greater than zero. |
 | `retries` | `0` | Number of extra attempts for a failed JacRed request. Must be non-negative. |
 
-JacRed is enrichment only. It is optional, and a timeout or miss does not make a title-based approximate result acceptable. See [Architecture](ARCHITECTURE.md) for matching and category rules.
+JacRed is configured inside Prowlarr as a Torznab indexer (the public indexer's endpoint is `/torznab/api`). torr2strm calls Prowlarr's REST API, so configure Prowlarr's base URL and API key here—not `https://jac.red`. A `403` from the configured URL is a request/access failure, not an empty search result. JacRed enrichment is optional and exact-hash matching remains mandatory. See [Architecture](ARCHITECTURE.md) for matching and category rules.
 
 ### `[logging]`
 
@@ -82,7 +82,7 @@ python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-ru
 | `--config` | `PATH` | Read this TOML file instead of `/etc/torr2strm/config.toml`. |
 | `--dry-run` | none | Perform discovery and planning but avoid output filesystem mutations and real source-torrent removals. Use it to review logs before a normal sync. |
 | `--version` | none | Print the application version and exit. |
-| `--jacred` | `URL` | Override `[jacred].url` for this invocation. Supply a service base URL such as `https://jac.red`, not a URL to one release. |
+| `--jacred` | `URL` | Override `[jacred].url` for this invocation. Supply the Prowlarr base URL such as `http://127.0.0.1:9696`, not `https://jac.red`. |
 | `--no-jacred` | none | Disable JacRed enrichment for this invocation. |
 | `--jacred-api-key` | `KEY` | Override `[jacred].api_key` for this invocation. |
 | `--jacred-indexer-id` | integer | Override `[jacred].indexer_id`; `0` means all indexers. |
@@ -119,9 +119,9 @@ enabled = true
 # Legacy [quality] timeout/retries keys are intentionally omitted in v1.4.1.
 
 [jacred]
-url = "https://jac.red"
-api_key = ""
-indexer_id = 1
+url = "http://127.0.0.1:9696"
+api_key = "PUT_PROWLARR_API_KEY_HERE"
+indexer_id = 0
 limit = 100
 timeout_sec = 10
 retries = 0
