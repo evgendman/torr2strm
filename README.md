@@ -74,7 +74,7 @@ Important details:
 - A non-empty TorrServer category other than `movie` or `tv` is treated as unknown and remains `_uncategorized`. Because the source field was non-empty, JacRed does not override it.
 - The program never guesses movie versus TV from title text.
 
-The second directory level is a fixed two-way split: `4K` when the primary eligible video stream has a maximum dimension of at least 2160 pixels; otherwise `1080p`. This is the torrent-level quality root and does not claim that every file is 1080p.
+The second directory level is a fixed two-way split: `4K` when the primary eligible video stream has a maximum dimension of at least 3840 pixels; otherwise `1080p`. This is the torrent-level quality root and does not claim that every file is 1080p.
 
 Kodi's normalized tree is separate from Jellyfin's existing tree. Identified releases of one movie/series share a canonical logical directory under each quality root. Identified TV episodes are placed under `Season NN`; unidentified series keep the torrent release-title directory and original internal file hierarchy. Unknown IDs are never fabricated and title similarity alone never merges torrents.
 
@@ -133,7 +133,7 @@ Quality-resolution priority:
 3. Explicit resolution/interlace/HDR/Dolby Vision markers in the torrent release title.
 4. Unknown quality.
 
-The root is always either `4K` (primary dimensions with max(width, height) >= 2160) or `1080p` (everything else, including unknown quality). The display label is independent: for example, a 720p torrent is stored under the `1080p` root but its Kodi item name says `720p`. If quality is unknown, the root is `1080p` and the name has no quality suffix. Codec/source tokens such as `WEB-DL`, `BluRay`, `HEVC` or `HD` alone are not treated as a resolution.
+The root is always either `4K` (primary dimensions with max(width, height) >= 3840) or `1080p` (everything else, including unknown quality). The display label is independent: for example, a 720p torrent is stored under the `1080p` root but its Kodi item name says `720p`. If quality is unknown, the root is `1080p` and the name has no quality suffix. Codec/source tokens such as `WEB-DL`, `BluRay`, `HEVC` or `HD` alone are not treated as a resolution.
 
 ## Magnet handling for Kodi
 
