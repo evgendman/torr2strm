@@ -2475,7 +2475,7 @@ class OutputRunner:
             tvshow_rel = tvshow_path.relative_to(self.root).as_posix()
             self._write_nfo(
                 tvshow_path,
-                self._tvshow_nfo_content(snap, identity),
+                self._tvshow_nfo_content(snap),
                 snap.hash,
                 snap.title,
                 tvshow_rel,
