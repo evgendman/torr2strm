@@ -333,9 +333,9 @@ def quality_label_from_text(value: Any) -> str | None:
         label = "1080p"
     elif re.search(r"(?<![a-z0-9])720p(?![a-z0-9])", text):
         label = "720p"
-    elif re.search(r"(?<![a-z0-9])576i?(?![a-z0-9])", text):
+    elif re.search(r"(?<![a-z0-9])(?:576p|576i)(?![a-z0-9])", text):
         label = "576p"
-    elif re.search(r"(?<![a-z0-9])480i?(?![a-z0-9])", text):
+    elif re.search(r"(?<![a-z0-9])(?:480p|480i)(?![a-z0-9])", text):
         label = "480p"
     elif re.search(r"(?<![a-z0-9])360p(?![a-z0-9])", text):
         label = "360p"
@@ -378,7 +378,7 @@ def quality_label_from_metadata(metadata: dict[str, Any] | None) -> str | None:
                         label = quality_label_from_text(f"{str(candidate).strip()}p")
                         if label:
                             return label
-        if isinstance(value, dict) and normalized_key in {"info", "metadata", "release", "media", "mediainfo", "details"}:
+        if isinstance(value, dict) and normalized_key in {"info", "metadata", "release", "media", "mediainfo", "details", "torrserver", "qualityinfo"}:
             label = quality_label_from_metadata(value)
             if label:
                 return label
@@ -927,10 +927,17 @@ def migrate_nfo_v1_to_v2(content: str) -> tuple[str, bool]:
         return content, False
     root, urls = _nfo_xml_and_urls(content)
     root_tag = str(root.tag).lower()
-    # The v1/v2 schema included titles. Remove them before upgrading so cached
-    # metadata cannot override Kodi/Jellyfin scraper localization.
+    # Older schemas contained display metadata. Restrict the upgraded document
+    # to the approved allowlist: identity fields, episode coordinates where
+    # applicable, and technical stream details. Names must not override locales.
+    root_tag = str(root.tag).lower()
+    allowed = {"torr2strm", "tmdbid", "imdbid", "tvdbid", "uniqueid"}
+    if root_tag == "episodedetails":
+        allowed.update({"season", "episode", "fileinfo"})
+    elif root_tag == "movie":
+        allowed.add("fileinfo")
     for child in list(root):
-        if str(child.tag).lower() in {"title", "originaltitle", "sorttitle", "showtitle", "name"}:
+        if str(child.tag).lower() not in allowed:
             root.remove(child)
     tmdb = _nfo_tmdb_id(root)
     canonical_url = _nfo_combination_url(root_tag, tmdb)
@@ -2396,7 +2403,7 @@ class OutputRunner:
                 "media_info_source": source,
             }
 
-        if snap.category == "tv":
+        if snap.category == "tv" and provider_ids_for_snapshot(snap):
             tvshow_path = safe_join(torrent_dir, "tvshow.nfo")
             tvshow_rel = tvshow_path.relative_to(self.root).as_posix()
             self._write_nfo(tvshow_path, self._tvshow_nfo_content(snap), snap.hash, snap.title, tvshow_rel)
