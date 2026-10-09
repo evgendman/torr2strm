@@ -1,9 +1,9 @@
-# torr2strm v1.3.1
+# torr2strm v1.3.2
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
 [torrserver]
-url = "http://127.0.0.1:8092"
+url = "http://127.0.0.1:8097"
 timeout_sec = 20
 remove_timeout_sec = 60
 metadata_wait_sec = 10
@@ -41,15 +41,16 @@ video_extensions = [
 ]
 
 [quality]
-# Only real ffprobe is accepted. 2160-class -> 4K; everything else -> 1080p.
+# torr2strm calls TorrServer GET /ffp/{hash}/{file_id}; it does not launch ffprobe itself.
+# Ensure ffprobe is available on the TorrServer host. 2160-class -> 4K; otherwise -> 1080p.
 timeout_sec = 12
 retries = 0
 
 [jacred]
-# The public jac.red instance used in our tests:
-#   url = "https://jac.red"
-#   indexer_id = 1
-# Empty URL disables optional JacRed enrichment.
+# The URL is a service base URL, not a release-page URL; code appends /api/v1/search.
+# A candidate result is accepted only when its BTIH/infoHash exactly matches TorrServer.
+# The exact result may supply category, ffprobe JSON, magnet URL and provider IDs.
+# The public jac.red instance used in our tests; an empty URL disables enrichment.
 url = "https://jac.red"
 api_key = ""
 indexer_id = 1
