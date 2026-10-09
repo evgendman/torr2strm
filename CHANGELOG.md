@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.4
+
+- Restored the original direct JacRed v2 JSON API call at `/api/v2.0/indexers/all/results`, matching the existing `jacred2prowlarr` client.
+- Uses the native `q`, `category=movie_`/`tv_`, `limit`, and optional `year` parameters plus the established JSON Accept/User-Agent headers.
+- Parses JacRed's `Results` JSON array and normalizes native fields including `Title`, `MagnetUri`, `Category`, and nested `info` metadata.
+- Added one-second spacing between upstream requests and capped candidate query variants to avoid issuing requests for years and release-audio/codec fragments.
+- Removed the mistaken Torznab XML request path from the direct client.
+
 ## 1.4.3
 
 - Replaced the Prowlarr Search Feed (`/api/v1/search`) with JacRed's public native Torznab XML endpoint (`/torznab/api`); torr2strm no longer needs a local Prowlarr instance or its indexer ID.
