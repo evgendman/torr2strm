@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from torr2strm import (
     JacRedMatch,
+    JacRedClient,
     MediaInfoResolver,
     OutputRunner,
     OutputSpec,
@@ -814,3 +815,45 @@ def test_fake_probe_payloads_are_ignored_unless_already_attached_to_release():
         assert client.ffprobe_calls == []
         assert list((jr / "movie" / "1080p").rglob("*.strm"))
         assert not list((jr / "movie" / "4K").rglob("*.strm"))
+
+
+def test_jacred_exact_match_uses_magnet_hash_when_guid_is_a_result_url():
+    h = "0123456789abcdef0123456789abcdef01234567"
+    snap = parse_snapshot(torrent(h=h, title="Ballerina", category="movie"), h)
+    client = JacRedClient({
+        "url": "https://jac.red",
+        "api_key": "",
+        "indexer_id": 1,
+        "limit": 100,
+        "timeout_sec": 1,
+        "retries": 0,
+    })
+    client._candidate_queries = lambda _torrent: ["Ballerina"]
+    client._get_json = lambda _query, _search_type: [{
+        "guid": "https://jac.red/details/6731022",
+        "magnetUrl": f"magnet:?xt=urn:btih:{h}&dn=Ballerina",
+        "categories": [2045],
+    }]
+
+    match = client.find_match(snap)
+
+    assert match is not None
+    assert match.result["guid"] == "https://jac.red/details/6731022"
+    assert match.category == "movie"
+    assert match.magnet == f"magnet:?xt=urn:btih:{h}&dn=Ballerina"
+
+
+def test_jacred_exact_match_accepts_infohash_and_base32_btih():
+    from torr2strm import extract_btih
+
+    h = "0123456789abcdef0123456789abcdef01234567"
+    snap = parse_snapshot(torrent(h=h, title="Ballerina", category="movie"), h)
+    client = JacRedClient({"url": "https://jac.red", "indexer_id": 1})
+    client._candidate_queries = lambda _torrent: ["Ballerina"]
+    client._get_json = lambda _query, _search_type: [{
+        "infoHash": h.upper(),
+        "guid": "https://jac.red/details/6731022",
+    }]
+    match = client.find_match(snap)
+    assert match is not None
+    assert extract_btih(f"magnet:?xt=urn:btih:{h}") == h
