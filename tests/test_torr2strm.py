@@ -546,9 +546,10 @@ def test_nfo_is_identical_between_enabled_outputs_and_contains_hdr_and_streamdet
         t = torrent(h=h, title="Prestige 2006", category="movie", data={"tmdbId": 1124, "imdbId": "tt0482571", "originalTitle": "The Prestige", "releaseDate": "2006-10-20"})
         p = probe(3840, 2160, codec="hevc", hdr="dv")
         client = FakeClient([t], probes={(h, 1): p})
-        jac = FakeJacRed({})
-        c = cfg(jr, kr, jacred=False)
+        jac = FakeJacRed({h: match_for(h, p, "movie", f"magnet:?xt=urn:btih:{h}&dn=Prestige")})
+        c = cfg(jr, kr, jacred=True)
         assert run(c, client, jac) == 0
+        assert client.ffprobe_calls == []
         jf_nfo = next((jr / "movie" / "4K").rglob("*.nfo"))
         kd_nfo = next((kr / "movie" / "4K").rglob("*.nfo"))
         assert jf_nfo.read_text(encoding="utf-8") == kd_nfo.read_text(encoding="utf-8")
