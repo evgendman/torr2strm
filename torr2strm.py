@@ -1558,8 +1558,6 @@ class MediaInfoResolver:
     def __init__(self, cfg: dict[str, Any], client: TorrServerClient, output_manifests: list[tuple[Path, dict[str, Any]]]):
         self.cfg = cfg
         self.client = client
-        self.timeout_sec = float(cfg["quality"]["timeout_sec"])
-        self.retries = int(cfg["quality"]["retries"])
         self.extensions = cfg["sync"]["video_extensions"]
         self.output_manifests = output_manifests
         self.stats = {"torrserver_ffprobe": 0, "nfo_reused": 0}
