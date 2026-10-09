@@ -2,9 +2,9 @@
 
 ## Source of truth and processing path
 
-TorrServer is the source of truth for torrent membership, info hash and FileStats. A synchronization pass loads the torrent and its files, optionally enriches with an exact-hash JacRed result, resolves per-file media information, determines one torrent-level quality root/label from the primary eligible video, then reconciles independent Jellyfin and Kodi/Elementum projections.
+TorrServer is the source of truth for torrent membership, info hash and FileStats. A synchronization pass loads the torrent and its files, optionally enriches with an exact-hash JacRed result, reads already-existing media information and all available quality evidence to determine one torrent-level quality root/label, then reconciles independent Jellyfin and Kodi/Elementum projections.
 
-\`\`\`text
+```text
 TorrServer torrent list + FileStats
         ↓
 optional JacRed search + exact BTIH/infoHash validation
@@ -20,7 +20,7 @@ choose display quality label by source priority; unknown → no suffix
 write STRM + NFO (streamdetails only if already available)
         ↓
 Jellyfin output (existing paths) + normalized Kodi output
-\`\`\`
+```
 
 ## JacRed matching and identity
 
