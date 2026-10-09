@@ -432,6 +432,10 @@ def source_episode_coordinates(path_value: str, torrent_title: str) -> tuple[int
         if match:
             return int(match.group(1)), int(match.group(2))
     season = season_number(path_value, torrent_title)
+    if season is None:
+        season_match = re.search(r"(?i)\bS(\d{1,2})(?!\s*E\d)", text)
+        if season_match:
+            season = int(season_match.group(1))
     return season, None
 
 
@@ -456,10 +460,18 @@ def explicit_display_title(snap: "TorrentSnapshot", *, tv: bool) -> tuple[str, s
         explicit = metadata_value(metadata, "movieTitle", "movieName", "originalTitle", "originalName")
         title = html.unescape(str(explicit)).strip() if explicit not in (None, "") else nfo_movie_title(snap)
         priority = 0 if explicit not in (None, "") else 1
+    # A fallback title may still contain release-quality tokens. Keep those in
+    # the final quality label instead of repeating them in the display name.
+    title = re.sub(
+        r"(?i)(?<![a-z0-9])(?:4320p|2160p|2160i|1440p|1080p|1080i|720p|576p|576i|480p|480i|360p|240p|8k|4k|uhd|2k)(?![a-z0-9])",
+        " ", title,
+    )
+    title = re.sub(r"(?i)\b(?:dolby[ ._-]?vision|dovi|dv|hdr(?:10(?:\+|plus)?)?|hlg)\b", " ", title)
+    title = re.sub(r"\s+", " ", title).strip(" ._-—")
     year = display_year(metadata, snap.title, tv=tv)
     if year:
         title = re.sub(rf"\s*\({re.escape(year)}\)\s*$", "", title).strip()
-    return sanitize_component(title), year, priority
+    return sanitize_component(title or snap.title), year, priority
 
 
 def clean_media_component(title: str, year: str | None) -> str:
@@ -2137,7 +2149,7 @@ class OutputRunner:
         normalized_movie = snap.category == "movie" and identity is not None
 
         targets: list[tuple[TorrentFile, Path, str, str, bool]] = []
-        if snap.category == "movie" and (normalized_movie or True):
+        if snap.category == "movie":
             # Preserve the existing Elementum movie model: one torrent-level link,
             # using the primary video's file-specific NFO data.
             base = self.kodi_display_title_by_hash.get(snap.hash) or nfo_movie_title(snap)
