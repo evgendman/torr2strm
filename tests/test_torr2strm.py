@@ -15,6 +15,10 @@ from torr2strm import (
     category_from_jacred_result,
     extract_btih,
     media_quality,
+    quality_label_from_probe,
+    quality_label_from_text,
+    quality_label_from_metadata,
+    quality_root_from_label,
     parse_snapshot,
     usable_ffprobe,
     atomic_write_text,
@@ -181,9 +185,17 @@ def test_extract_btih_accepts_magnet():
     assert extract_btih(f"magnet:?xt=urn:btih:{h}&dn=test") == h
 
 
-def test_quality_is_only_from_ffprobe():
+def test_quality_root_and_display_label_are_separate_and_quality_fallback_is_explicit():
     assert media_quality(probe(1920, 1080)) == "1080p"
     assert media_quality(probe(3840, 1600)) == "4K"
+    assert quality_label_from_probe(probe(1280, 720)) == "720p"
+    assert quality_label_from_probe(probe(3840, 2160, hdr="dv")) == "2160p DV"
+    assert quality_label_from_text("Release.WEB-DL.1080p.HDR") == "1080p HDR"
+    assert quality_label_from_text("Release 4K Dolby Vision") == "2160p DV"
+    assert quality_label_from_text("WEB-DL HEVC") is None
+    assert quality_label_from_metadata({"quality": "720p WEB-DL"}) == "720p"
+    assert quality_root_from_label("720p") == "1080p"
+    assert quality_root_from_label("2160p HDR") == "4K"
     assert usable_ffprobe(probe()) is not None
 
 
@@ -351,18 +363,23 @@ def test_provider_ids_and_base_metadata_are_written_to_nfo():
         assert "<tvdbid>302</tvdbid>" in text
         assert '<uniqueid type="tvmaze">1234</uniqueid>' in text
         assert '<uniqueid type="trakt">5678</uniqueid>' in text
-        assert "<aired>2021-06-10</aired>" in text
+        assert "<season>1</season>" in text
+        assert "<episode>1</episode>" in text
+        assert "<title>" not in text
+        assert "<showtitle>" not in text
+        assert "<originaltitle>" not in text
         tvshow = next((jr / "tv" / "1080p").rglob("tvshow.nfo"))
         tvshow_text = tvshow.read_text(encoding="utf-8")
-        assert "<premiered>2021-06-09</premiered>" in tvshow_text
-        assert nfo_format_version(tvshow_text) == 2
+        assert "<title>" not in tvshow_text
+        assert "<premiered>" not in tvshow_text
+        assert nfo_format_version(tvshow_text) == 3
         assert tvshow_text.rstrip().endswith("https://www.themoviedb.org/tv/1124")
         episode_text = nfo.read_text(encoding="utf-8")
-        assert nfo_format_version(episode_text) == 2
+        assert nfo_format_version(episode_text) == 3
         assert "https://www.themoviedb.org/tv/1124" not in episode_text
 
 
-def test_manifest_v4_exists_in_both_outputs():
+def test_manifest_v5_exists_in_both_outputs():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr = base / "jelly"
@@ -376,24 +393,27 @@ def test_manifest_v4_exists_in_both_outputs():
         assert run(c, client, jac) == 0
         for root in (jr, kr):
             manifest = json.loads((root / ".torr2strm" / "manifest.json").read_text())
-            assert manifest["version"] == 4
+            assert manifest["version"] == 5
             assert manifest["output"] in {"jellyfin", "kodi"}
             assert manifest["root"] == str(root)
 
 
-def test_old_title_quality_is_not_used():
+def test_release_title_quality_fallback_materializes_unknown_media():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr = base / "jelly"
         kr = base / "kodi"
         h = "8" * 40
-        t = torrent(h=h, title="Film 2160p", category="movie")
+        t = torrent(h=h, title="Film 2160p HDR", category="movie")
         client = FakeClient([t], probes={})
         jac = FakeJacRed({})
         c = cfg(jr, kr, jacred=False)
         assert run(c, client, jac) == 0
-        assert not list(jr.rglob("*.strm"))
-        assert not list(kr.rglob("*.strm"))
+        assert list((jr / "movie" / "4K").rglob("*.strm"))
+        kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
+        assert "2160p HDR" in kodi_strm.name
+        assert "[88888888]" in kodi_strm.name
+        assert client.ffprobe_calls == [(h, 1)]
 
 
 def test_blank_category_from_jacred_tv_and_anime_stays_uncategorized():
@@ -419,7 +439,7 @@ def test_blank_category_from_jacred_tv_and_anime_stays_uncategorized():
         assert not list((jr / "tv" / "1080p").rglob("Example.Anime*"))
 
 
-def test_nfo_format_v2_and_combination_tmdb_url_are_generated():
+def test_nfo_format_v3_and_combination_tmdb_url_are_generated():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr = base / "jelly"
@@ -433,8 +453,8 @@ def test_nfo_format_v2_and_combination_tmdb_url_are_generated():
         assert run(c, client, jac) == 0
         nfo = next((jr / "movie" / "4K").rglob("*.nfo"))
         text = nfo.read_text(encoding="utf-8")
-        assert nfo_format_version(text) == 2
-        assert '<torr2strm formatversion="2"' in text
+        assert nfo_format_version(text) == 3
+        assert '<torr2strm formatversion="3"' in text
         assert text.rstrip().endswith("https://www.themoviedb.org/movie/1124")
         assert MediaInfoResolver._nfo_is_usable(nfo)
 
@@ -452,9 +472,10 @@ def test_legacy_nfo_v1_migrates_without_losing_metadata_and_gets_tmdb_url():
 """
     migrated, changed = migrate_nfo_v1_to_v2(legacy)
     assert changed
-    assert nfo_format_version(migrated) == 2
+    assert nfo_format_version(migrated) == 3
     assert "<tag>USER_NOTE</tag>" in migrated
-    assert '<torr2strm formatversion="2"' in migrated
+    assert "<title>" not in migrated
+    assert '<torr2strm formatversion="3"' in migrated
     assert migrated.rstrip().endswith("https://www.themoviedb.org/movie/1124")
 
 
@@ -485,7 +506,8 @@ def test_normal_sync_migrates_legacy_nfos_without_reprobing():
         assert client.ffprobe_calls == []
         for path in nfos:
             text = path.read_text(encoding="utf-8")
-            assert nfo_format_version(text) == 2
+            assert nfo_format_version(text) == 3
+            assert "<title>" not in text
             assert text.rstrip().endswith("https://www.themoviedb.org/movie/1124")
 
 
@@ -505,10 +527,71 @@ def test_nfo_is_identical_between_enabled_outputs_and_contains_hdr_and_streamdet
         kd_nfo = next((kr / "movie" / "4K").rglob("*.nfo"))
         assert jf_nfo.read_text(encoding="utf-8") == kd_nfo.read_text(encoding="utf-8")
         text = jf_nfo.read_text(encoding="utf-8")
-        assert "<originaltitle>The Prestige</originaltitle>" in text
+        assert "<title>" not in text
+        assert "<originaltitle>" not in text
         assert "<tmdbid>1124</tmdbid>" in text
         assert "<imdbid>tt0482571</imdbid>" in text
         assert "<hdrtype>dolbyvision</hdrtype>" in text
         assert "<width>3840</width>" in text
         assert "<height>2160</height>" in text
         assert "<fileinfo><streamdetails>" in text
+
+
+def test_kodi_groups_identified_series_by_id_and_keeps_releases_separate():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h1, h2 = "1" * 40, "2" * 40
+        t1 = torrent(h=h1, title="Different.Release.Name.S01E01.720p", category="tv",
+                     paths=["S01E01.mkv"], data={"seriesTmdbId": 777, "seriesTitle": "Canonical Series", "seriesYear": 2024})
+        t2 = torrent(h=h2, title="Other.Release.Name.S01E01.1080p", category="tv",
+                     paths=["Release/episode1.mkv"], data={"seriesTmdbId": 777, "seriesTitle": "Canonical Series", "seriesYear": 2024})
+        p720, p1080 = probe(1280, 720), probe(1920, 1080)
+        client = FakeClient([t1, t2], probes={(h1, 1): p720, (h2, 1): p1080})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        strms = list((kr / "tv" / "1080p" / "Canonical Series (2024)").rglob("*.strm"))
+        assert len(strms) == 2
+        assert len({p.name for p in strms}) == 2
+        assert any("720p [11111111]" in p.name for p in strms)
+        assert any("1080p [22222222]" in p.name for p in strms)
+        assert (kr / "tv" / "1080p" / "Canonical Series (2024)" / "tvshow.nfo").is_file()
+        assert not list(kr.rglob("Different.Release.Name*"))
+        assert not list(kr.rglob("Other.Release.Name*"))
+
+
+def test_kodi_unknown_series_preserves_source_hierarchy_and_does_not_invent_episode():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "3" * 40
+        t = torrent(h=h, title="Mystery.Release.S01.720p", category="tv",
+                    paths=["DiscA/Season01/episode-one.mkv"], data={})
+        client = FakeClient([t], probes={(h, 1): probe(1280, 720)})
+        assert run(cfg(jr, kr, jacred=False), client, FakeJacRed({})) == 0
+        strm = next((kr / "tv" / "1080p" / "Mystery.Release.S01.720p").rglob("*.strm"))
+        assert "DiscA/Season01" in str(strm)
+        assert "S01E" not in strm.name
+        assert "720p [33333333]" in strm.name
+        assert not list((kr / "tv" / "1080p").rglob("tvshow.nfo"))
+
+
+def test_kodi_shared_series_directory_cleanup_preserves_other_release():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h1, h2 = "4" * 40, "5" * 40
+        data = {"seriesTmdbId": 991, "seriesTitle": "Shared Show", "seriesYear": 2020}
+        t1 = torrent(h=h1, title="Release A S01E01", category="tv", paths=["S01E01.mkv"], data=data)
+        t2 = torrent(h=h2, title="Release B S01E02", category="tv", paths=["S01E02.mkv"], data=data)
+        p = probe(1920, 1080)
+        client = FakeClient([t1, t2], probes={(h1, 1): p, (h2, 1): p})
+        c = cfg(jr, kr, jacred=False)
+        assert run(c, client, FakeJacRed({})) == 0
+        first = next((kr / "tv" / "1080p" / "Shared Show (2020)").rglob("*44444444*.strm"))
+        client.torrents.pop(h1)
+        assert run(c, client, FakeJacRed({})) == 0
+        assert not first.exists()
+        remaining = list((kr / "tv" / "1080p" / "Shared Show (2020)").rglob("*.strm"))
+        assert len(remaining) == 1
+        assert "[55555555]" in remaining[0].name
+        assert (kr / "tv" / "1080p" / "Shared Show (2020)" / "tvshow.nfo").is_file()
