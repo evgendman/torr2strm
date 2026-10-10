@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Status: v1.4.6 candidate; Windows/SMB-safe Kodi path fix pending CI and mini-PC validation.** External lookups remain removed; Jellyfin's output-tree behavior is unchanged.
+> **Status: v1.4.6 merged to `main` and validated on the mini-PC.** GitHub Actions passed (32 tests); real synchronization preserved the Jellyfin (655 STRM/685 NFO) and Kodi (553 STRM/561 NFO) file counts; Windows/SMB paths and Kodi playback were verified. The formal `v1.4.6` release tag is pending. External lookups remain removed; Jellyfin's output-tree behavior is unchanged.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -271,7 +271,8 @@ The work is complete when the independent Kodi tree groups identified releases b
 - [x] Phase 3 — Logical identity and Kodi path planning implemented
 - [x] Phase 4 — Independent Kodi tree builder implemented
 - [x] Phase 5 — Manifest reconciliation and clean-rebuild path implemented
-- [ ] Phase 6 — Regression tests for the TorrServer-only rules are pending CI
-- [ ] Phase 7 — Real-player validation on the mini-PC and release tagging
+- [x] Phase 6 — Regression tests passed in GitHub Actions and on the mini-PC (32 tests)
+- [x] Phase 7a — Real-player validation on the mini-PC: Windows/SMB paths and Kodi playback verified
+- [ ] Phase 7b — Create the `v1.4.6` release tag and publish the GitHub Release
 
-This status records a candidate implementation, not a production-approved release. Do not tag or treat v1.4.6 as production-approved until CI passes and Kodi Windows/SMB path changes are validated on the mini-PC.
+The implementation is merged and validated on the mini-PC. The formal GitHub version tag and release publication remain pending.
