@@ -3,7 +3,7 @@
 Production file: `/etc/torr2strm/config.toml`.
 Example shipped with the repository: [`etc/config.toml.example`](../etc/config.toml.example).
 
-`torr2strm` reads one TOML file at startup. Command-line flags can override selected JacRed values for a single run; they do not write back to the file. Unknown keys do not provide additional features unless the program explicitly reads them.
+`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.5 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
 
 ## Complete parameter map
 
@@ -38,30 +38,16 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 | `tv_unmatched_season` | `0` | Season number used when a TV file's season cannot be inferred from its path/title. `0` corresponds to Specials-style season semantics. |
 | `video_extensions` | See `etc/config.toml.example` | List of file extensions eligible for video STRM generation and cached-NFO lookup. Extensions may be written with or without the leading dot. Audio, subtitle and image files do not get their own video STRM. |
 
-### Legacy `[quality]` settings
+### Quality decision rules
 
-In v1.4.1, `[quality].timeout_sec` and `[quality].retries` are no longer used. Existing config files may retain these keys, but they are ignored. torr2strm does not call TorrServer `/ffp/{hash}/{file_id}`, does not execute a local ffprobe, and does not require ffprobe to be installed on TorrServer.
+- Category comes only from the category field already present in TorrServer. Missing, blank, or unsupported values remain _uncategorized.
+- The 4K root is selected only when usable ffprobe stream data already embedded in TorrServer metadata proves a video dimension of at least 3840 pixels.
+- If that payload is missing, invalid, or does not prove 4K, the root is 1080p.
+- Structured quality fields and explicit markers in the TorrServer title may supply a visible filename label, but never select the 4K root.
+- Cached NFOs may be reused for exact-file streamdetails only; they do not affect category, root, or display label.
+- No local ffprobe is run and TorrServer /ffp/ is never called. No JacRed, Prowlarr, or other external-source requests are made.
 
-Quality decision rules:
-
-- Read only already-existing ffprobe payloads or valid cached NFO details, if any.
-- Then read structured resolution/quality fields from TorrServer metadata and exact-hash JacRed results.
-- Then inspect explicit resolution/HDR/Dolby Vision markers in the release title.
-- Use the best-priority available label for the STRM name, but put the torrent under `4K` if **any available source** provides affirmative 4K evidence. If none does, use `1080p`.
-- If no usable resolution label is available, the root is `1080p` and no quality suffix is written to the basename.
-
-### `[jacred]`
-
-| Parameter | Default | Meaning |
-|---|---:|---|
-| `url` | `https://jac.red` in the example; empty disables enrichment | Base URL of the public JacRed service. `torr2strm` appends `/api/v2.0/indexers/all/results` and reads a JSON object containing a `Results` array. No local Prowlarr is required. |
-| `api_key` | legacy setting; ignored | Retained only so older TOML files continue to load. The direct public JacRed v2 client does not send an API key. |
-| `indexer_id` | legacy setting; ignored | Retained only so older TOML files continue to load. The direct JacRed v2 endpoint searches its public aggregate and does not use a Prowlarr indexer ID. |
-| `limit` | `1000` | Maximum number of JacRed v2 results per query. Allowed range: `1`–`1000`; use `1000` to match the previous working client. |
-| `timeout_sec` | `30` | HTTP timeout per direct JacRed v2 JSON request. Must be greater than zero. |
-| `retries` | `0` | Number of extra attempts for a failed JacRed request. Must be non-negative. |
-
-`torr2strm` calls `https://jac.red/api/v2.0/indexers/all/results` directly, matching the existing `jacred2prowlarr` client. It sends `q`, `limit`, `category=movie_` or `category=tv_` when applicable, and `year` when found in the query. The response must be JSON with a `Results` array. The Torznab XML endpoint and Prowlarr Search Feed are not used by v1.4.4. Exact-hash matching remains mandatory. See [Architecture](ARCHITECTURE.md) for matching and category rules.
+Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.5 and can be removed.
 
 ### `[logging]`
 
@@ -82,13 +68,8 @@ python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-ru
 | `--config` | `PATH` | Read this TOML file instead of `/etc/torr2strm/config.toml`. |
 | `--dry-run` | none | Perform discovery and planning but avoid output filesystem mutations and real source-torrent removals. Use it to review logs before a normal sync. |
 | `--version` | none | Print the application version and exit. |
-| `--jacred` | `URL` | Override `[jacred].url` for this invocation; use a base URL such as `https://jac.red`, not the full endpoint path. |
 | `--no-jacred` | none | Disable JacRed enrichment for this invocation. |
-| `--jacred-api-key` | `KEY` | Deprecated compatibility option; ignored by direct JacRed v2 requests. |
-| `--jacred-indexer-id` | integer | Deprecated compatibility option; ignored by direct JacRed v2 requests. |
-| `--jacred-limit` | integer | Override `[jacred].limit`; must be in the range `1`–`1000`. |
 
-`--jacred` and `--no-jacred` are mutually exclusive. CLI overrides are in-memory only and are not persisted to the TOML file.
 
 ## ffprobe is optional
 
@@ -117,13 +98,6 @@ manifest = ".torr2strm/manifest.json"
 enabled = true
 
 # Legacy [quality] timeout/retries keys are intentionally omitted in v1.4.1.
-
-[jacred]
-url = "https://jac.red"
-# Legacy api_key and indexer_id keys are not needed by direct JacRed v2 API.
-limit = 1000
-timeout_sec = 30
-retries = 0
 
 [logging]
 level = "INFO"

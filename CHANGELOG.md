@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.5
+
+- Removed runtime lookups to JacRed, Prowlarr, and all other external metadata providers.
+- Category comes only from TorrServer's category field; missing or unsupported values remain in `_uncategorized`.
+- A torrent enters `4K` only when ffprobe already embedded in TorrServer metadata proves 4K-class dimensions; otherwise it enters `1080p`.
+- Preserved Jellyfin output paths, normalized Kodi/Elementum tree, manifests, NFO contracts and safe reconciliation.
+- Removed JacRed configuration/CLI options; legacy `[jacred]` sections are ignored.
+
 ## 1.4.4
 
 - Restored the original direct JacRed v2 JSON API call at `/api/v2.0/indexers/all/results`, matching the existing `jacred2prowlarr` client.

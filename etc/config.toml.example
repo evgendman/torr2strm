@@ -1,4 +1,4 @@
-# torr2strm v1.4.4
+# torr2strm v1.4.5
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
@@ -41,15 +41,6 @@ video_extensions = [
 ]
 
 
-
-[jacred]
-# Direct JacRed v2 JSON API; this is the same upstream method used by jacred2prowlarr.
-# The endpoint /api/v2.0/indexers/all/results is appended automatically.
-# No Prowlarr instance or API key is required.
-url = "https://jac.red"
-limit = 1000
-timeout_sec = 30
-retries = 0
 
 [logging]
 level = "INFO"
