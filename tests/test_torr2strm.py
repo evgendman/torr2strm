@@ -262,16 +262,19 @@ def test_second_run_reuses_nfo_across_both_outputs():
         h = "3" * 40
         t = torrent(h=h, title="Film 2026", category="movie")
         payload = probe(1920, 1080)
+        attach_existing_probe(t, payload)
         client = FakeClient([t], probes={(h, 1): payload})
         c = cfg(jr, kr)
         assert run(c, client) == 0
-        first_calls = list(jac.calls)
+        jelly_before = {p.relative_to(jr): p.read_bytes() for p in jr.rglob("*.nfo")}
+        kodi_before = {p.relative_to(kr): p.read_bytes() for p in kr.rglob("*.nfo")}
+        assert jelly_before and kodi_before
         client.ffprobe_calls.clear()
-        jac.calls.clear()
         assert run(c, client) == 0
         assert client.ffprobe_calls == []
-        assert jac.calls == [h]
-        # There are two output copies of the same NFO, but the media probe is shared/reused.
+        assert {p.relative_to(jr): p.read_bytes() for p in jr.rglob("*.nfo")} == jelly_before
+        assert {p.relative_to(kr): p.read_bytes() for p in kr.rglob("*.nfo")} == kodi_before
+        # Both output trees preserve byte-identical NFO files across a no-op resync.
 
 
 def test_jellyfin_reverse_delete_is_authoritative_and_kodi_is_skipped():
