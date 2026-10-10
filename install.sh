@@ -35,7 +35,7 @@ else
   systemctl disable torr2strm.timer >/dev/null 2>&1 || true
 fi
 
-printf 'Installed torr2strm v1.4.5\n'
+printf 'Installed torr2strm v1.4.6\n'
 printf 'Code:   /opt/torr2strm/torr2strm.py\n'
 printf 'Config: /etc/torr2strm/config.toml\n'
 printf 'Metadata enrichment: external lookups disabled; TorrServer data only\n'

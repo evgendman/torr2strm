@@ -3,7 +3,7 @@
 Production file: `/etc/torr2strm/config.toml`.
 Example shipped with the repository: [`etc/config.toml.example`](../etc/config.toml.example).
 
-`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.5 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
+`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.6 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
 
 ## Complete parameter map
 
@@ -29,7 +29,7 @@ torr2strm obtains the torrent list and file inventory from TorrServer. It does n
 | `remove_torrent_on_strm_delete` | `false` | not applicable (forced off) | Jellyfin-only reverse-deletion switch. If enabled, deleting a tracked Jellyfin STRM may remove its source torrent from TorrServer using `action=rem`. `action=drop` is not used. |
 | `max_torrent_removals_per_run` | `1` | not applicable (forced to `0`) | Safety cap on source-torrent removals caused by missing managed Jellyfin STRM files during one run. `0` disables such removals even if reverse deletion is enabled. |
 
-Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: deleting Kodi STRM files never removes a TorrServer torrent. Disappearing torrents are reflected in all enabled outputs on synchronization.
+Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: deleting Kodi STRM files never removes a TorrServer torrent. Disappearing torrents are reflected in all enabled outputs on synchronization. Kodi path components are sanitized for Windows/SMB compatibility; Jellyfin path naming remains unchanged.
 
 ### `[sync]`
 
@@ -47,7 +47,7 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 - Cached NFOs may be reused for exact-file streamdetails only; they do not affect category, root, or display label.
 - No local ffprobe is run and TorrServer /ffp/ is never called. No JacRed, Prowlarr, or other external-source requests are made.
 
-Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.5 and can be removed.
+Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.6 and can be removed.
 
 ### `[logging]`
 

@@ -59,6 +59,8 @@ A known series directory has no torrent hash. If genuinely different series IDs 
 
 Every Kodi item release remains physically distinct. Its basename includes a readable title/episode coordinate where known, then — <quality-label> if known, then [<short torrent hash>] immediately before the extension. Start with 8 hash characters and lengthen only when short-hash strings collide. If two files in one torrent map to the same logical episode, append a file ordinal only to those colliding items.
 
+Kodi directory and filename components, including torrent-internal folders for unidentified content, are sanitized for Windows/SMB: forbidden characters are replaced, reserved device names are prefixed, and trailing dots/spaces are removed. `.strm` and `.nfo` extensions stay intact. This is Kodi-only; Jellyfin's Linux path naming is unchanged. The next normal sync reconciles old managed paths with the sanitized paths recorded in the manifest; do not rename managed files manually.
+
 Playback semantics do not change:
 
 - Movies: one torrent-level Elementum STRM per release, no oindex.

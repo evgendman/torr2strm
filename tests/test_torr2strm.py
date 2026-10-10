@@ -13,6 +13,7 @@ from torr2strm import (
     SyncCoordinator,
     bounded_strm_leaf,
     bounded_kodi_leaf,
+    sanitize_kodi_component,
     extract_btih,
     media_quality,
     quality_label_from_probe,
@@ -212,6 +213,71 @@ def test_long_utf8_strm_nfo_names_are_bounded_and_atomic_write_succeeds():
         atomic_write_text(nfo, "<movie/>\n")
         assert nfo.read_text(encoding="utf-8") == "<movie/>\n"
 
+
+
+def test_sanitize_kodi_component_replaces_windows_reserved_names_and_punctuation():
+    safe = sanitize_kodi_component('Baywatch | Extended: "Cut" <Edition> ? *')
+    for invalid in '<>:"|?*':
+        assert invalid not in safe
+    assert "\\" not in safe
+    assert sanitize_kodi_component("Folder\\Name") == "Folder - Name"
+    assert sanitize_kodi_component("Folder/Season") == "Folder - Season"
+    assert sanitize_kodi_component("trailing. ") == "trailing"
+    assert sanitize_kodi_component("CON") == "_CON"
+    assert sanitize_kodi_component("LPT2.txt") == "_LPT2.txt"
+
+
+def test_kodi_windows_safe_paths_preserve_extensions_and_do_not_change_jellyfin_names():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h1 = "9" * 40
+        movie = torrent(
+            h=h1,
+            title='Baywatch | Extended: "Cut" <Edition>',
+            category="movie",
+            paths=['Baywatch | Extended: "Cut".mkv'],
+            data={"tmdbid": 339846, "movieTitle": 'Baywatch | Extended: "Cut" <Edition>'},
+        )
+        p = probe()
+        attach_existing_probe(movie, p)
+
+        h2 = "8" * 40
+        unknown_tv = torrent(
+            h=h2,
+            title="Unmatched Series",
+            category="tv",
+            paths=["Disc|One/Season:01/Episode?01.mkv"],
+            data={},
+        )
+        attach_existing_probe(unknown_tv, p)
+
+        client = FakeClient([movie, unknown_tv], probes={(h1, 1): p, (h2, 1): p})
+        assert run(cfg(jr, kr), client) == 0
+
+        kodi_strms = sorted(kr.rglob("*.strm"))
+        assert len(kodi_strms) == 2
+        for strm in kodi_strms:
+            assert strm.suffix == ".strm"
+            assert strm.with_suffix(".nfo").is_file()
+            for component in strm.relative_to(kr).parts:
+                for invalid in '<>:"|?*':
+                    assert invalid not in component
+                assert "\\" not in component
+                assert not component.endswith((".", " "))
+
+        relative_parts = next(
+            path.relative_to(kr).parts
+            for path in kodi_strms
+            if "Episode" in path.name
+        )
+        assert "Disc - One" in relative_parts
+        assert "Season - 01" in relative_parts
+
+        jelly_movie_dir = next((jr / "movie" / "1080p").iterdir())
+        assert "|" in jelly_movie_dir.name
+        jelly_strm = next(jelly_movie_dir.rglob("*.strm"))
+        assert "|" in jelly_strm.name
 
 def test_kodi_movie_constructs_magnet_from_torrserver_hash_without_external_lookup():
     with tempfile.TemporaryDirectory() as td:

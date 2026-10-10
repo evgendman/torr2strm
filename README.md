@@ -1,4 +1,4 @@
-# torr2strm v1.4.5
+# torr2strm v1.4.6
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -35,6 +35,7 @@ Default root:
 - `tv`: one `.strm` per playable video file, with the original zero-based FileStats order passed as `oindex`.
 - Playback URI uses `plugin://plugin.video.elementum/play?uri=<url-encoded-full-magnet>`.
 - The Kodi output is read-only: deleting a Kodi STRM never removes the TorrServer source.
+- Kodi path components are sanitized for Windows/SMB clients: forbidden punctuation and reserved device names are handled while `.strm`/`.nfo` extensions and readable names are preserved. Jellyfin's historical path naming is unchanged.
 
 Default root:
 

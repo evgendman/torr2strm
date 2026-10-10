@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Status: v1.4.5 candidate; automated CI and mini-PC validation pending.** External lookups are removed; Jellyfin/Kodi output-tree behavior is retained.
+> **Status: v1.4.6 candidate; Windows/SMB-safe Kodi path fix pending CI and mini-PC validation.** External lookups remain removed; Jellyfin's output-tree behavior is unchanged.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -62,7 +62,7 @@ These decisions are settled and should not be reopened during implementation unl
 14. **Unknown series identity:** use the torrent release title as the torrent-level directory name and preserve that torrent's original internal file hierarchy. Do not merge unknown series based on title similarity and do not invent IDs. Add a short torrent hash to the fallback directory name only if it is necessary to resolve an actual path collision.
 15. For identified movies, group releases by trusted movie identity under a readable `<Movie Name> (<Year, if known>)/` directory in the relevant Kodi quality root. If the movie identity is unknown, use the torrent title and preserve the source torrent's internal hierarchy rather than guessing that separate torrents are the same movie.
 16. Keep the existing Kodi playback model: one torrent-level STRM per movie release, no `oindex`; one STRM per playable TV file, with Elementum `oindex` equal to that file's original zero-based FileStats order. Never substitute the sorted path index or TorrServer `/play` file ID.
-17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; the matching NFO uses the same basename. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm`. If quality is unknown, omit the `— <quality>` portion.
+17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; the matching NFO uses the same basename. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm`. If quality is unknown, omit the `— <quality>` portion. All Kodi path components, including torrent-internal folders for unidentified items, must be Windows/SMB-safe while preserving `.strm`/`.nfo` extensions; Jellyfin's path builder must remain unchanged.
 18. Use the approved short-hash convention already documented for the tree. Start with 8 characters and increase the length only if short hashes collide at the same output path. Do not lengthen non-conflicting hashes.
 19. If two files in one torrent resolve to the same logical episode and would otherwise have the same destination name, append a source-file ordinal from the original FileStats list (displayed starting at 1) only to the colliding items. This suffix is not added to normal episodes.
 20. Do not fabricate episode or season numbers. If the series identity is known and an episode number can be parsed, use it. If an episode number is unknown, preserve a human-readable source filename rather than inventing `SxxEyy`. Use the known season when available; if no season can be inferred, use `Season 00` (existing `tv_unmatched_season = 0` behavior). If series identity is unknown, the original torrent-tree fallback in item 14 takes precedence.
@@ -274,4 +274,4 @@ The work is complete when the independent Kodi tree groups identified releases b
 - [ ] Phase 6 — Regression tests for the TorrServer-only rules are pending CI
 - [ ] Phase 7 — Real-player validation on the mini-PC and release tagging
 
-This status records a CI-verified implementation candidate, not a production-approved release. Do not tag or treat v1.4.5 as production-approved until code and unchanged Jellyfin/Kodi output trees have been checked on the mini-PC.
+This status records a candidate implementation, not a production-approved release. Do not tag or treat v1.4.6 as production-approved until CI passes and Kodi Windows/SMB path changes are validated on the mini-PC.
