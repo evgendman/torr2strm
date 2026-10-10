@@ -68,7 +68,6 @@ python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-ru
 | `--config` | `PATH` | Read this TOML file instead of `/etc/torr2strm/config.toml`. |
 | `--dry-run` | none | Perform discovery and planning but avoid output filesystem mutations and real source-torrent removals. Use it to review logs before a normal sync. |
 | `--version` | none | Print the application version and exit. |
-| `--no-jacred` | none | Disable JacRed enrichment for this invocation. |
 
 
 ## ffprobe is optional
