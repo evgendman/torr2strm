@@ -158,6 +158,6 @@ Recoverable media-information failures no longer prevent the STRM from being mat
 
 ## Upgrade and deployment
 
-Software version: v1.4.5 candidate; manifest format v5; NFO format v3. No release tag has been created yet, and the candidate must pass the mini-PC dry-run before being treated as production-approved.
+Software version: v1.4.6; manifest format v5; NFO format v3. PR #8 is merged to main. GitHub Actions CI passed (32 tests), and the mini-PC synchronization, Windows/SMB directory listing, `.strm`/`.nfo` extensions, and Kodi playback were verified. File counts remained unchanged: Jellyfin 655 STRM/685 NFO; Kodi 553 STRM/561 NFO. The formal `v1.4.6` release tag has not yet been published.
 
 For an in-place upgrade, stop/disable the timer, back up the application script and configuration file, then run the repository installer. Preserve both configured media roots and their .torr2strm state. Do not clear or recreate either output tree as part of this upgrade. The installer leaves an already-disabled timer disabled; perform a manual --dry-run first and review the logs before any real sync.
