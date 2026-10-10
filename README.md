@@ -130,7 +130,7 @@ Main sections:
 - `[torrserver]`: TorrServer base URL and API/metadata timeouts.
 - `[outputs.jellyfin]` and `[outputs.kodi]`: output roots, independent manifests and enable flags. Only Jellyfin can enable reverse deletion.
 - `[sync]`: eligible video extensions and the fallback season for TV files whose season cannot be inferred.
-- `[quality]`: legacy timeout/retry settings; ignored in v1.4.1 and removable.
+- Legacy `[quality]` timeout/retry settings and old `[jacred]` sections are ignored in v1.4.5; they may be removed from the config file.
 - No external indexer/provider configuration exists in v1.4.5. Older `[jacred]` sections are ignored and may be removed from `/etc/torr2strm/config.toml`.
 - `[logging]`: log verbosity.
 
@@ -140,20 +140,13 @@ Command-line parameters (there are no external-source override flags):
 --config PATH              Use a configuration file other than /etc/torr2strm/config.toml
 --dry-run                  Log planned output changes without writing/deleting output files or removing torrents
 --version                  Print the installed version and exit
---jacred URL               Override the configured JacRed base URL for this run
---no-jacred                Disable JacRed for this run
---jacred-api-key KEY       Deprecated compatibility option; ignored by the public v2 API client
---jacred-indexer-id ID     Deprecated compatibility option; ignored by the public v2 API client
---jacred-limit N           Override JacRed result limit (1–1000)
 ```
 
-`--jacred` and `--no-jacred` are mutually exclusive. The default URL is `https://jac.red`; set it to empty to disable JacRed. `api_key`, `indexer_id`, `--jacred-api-key`, and `--jacred-indexer-id` are legacy compatibility settings and are ignored by the direct v2 JSON client.
 
 Example:
 
 ```bash
 sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-run
-sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred https://jac.red --jacred-limit 1000 --dry-run
 ```
 
 ## Service behavior
@@ -162,6 +155,8 @@ The service is a systemd oneshot triggered by `torr2strm.timer`.
 
 Recoverable media-information failures no longer prevent the STRM from being materialized if quality can be determined from structured metadata/title, or defaulted to the `1080p` root. An identity-only NFO is written if per-file ffprobe data is unavailable. Fatal configuration/source errors still exit non-zero.
 
-## Upgrade / clean start
+## Upgrade and deployment
 
-Software version is `1.4.0`, manifest format is v5, and NFO format is v3. Manifest v4 and older schemas are intentionally rejected. For the development rollout, do not migrate old trees: stop the timer/service, disable Jellyfin reverse deletion temporarily, clear all contents (including `.torr2strm` state) of the explicitly configured Jellyfin and Kodi roots, install the new program, recreate state and run a manual sync. Never clear any parent directory outside the configured roots. See [ROADMAP.md](ROADMAP.md) for the implemented behavior contract and tests.
+Software version: v1.4.5 candidate; manifest format v5; NFO format v3. No release tag has been created yet, and the candidate must pass the mini-PC dry-run before being treated as production-approved.
+
+For an in-place upgrade, stop/disable the timer, back up the application script and configuration file, then run the repository installer. Preserve both configured media roots and their .torr2strm state. Do not clear or recreate either output tree as part of this upgrade. The installer leaves an already-disabled timer disabled; perform a manual --dry-run first and review the logs before any real sync.
