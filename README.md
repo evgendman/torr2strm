@@ -1,10 +1,10 @@
-# torr2strm v1.4.4
+# torr2strm v1.4.6
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
 Development plan: [ROADMAP.md](ROADMAP.md).
 
-TorrServer is the source of truth. The service reads TorrServer FileStats, resolves category and real media information, then materializes independent output trees.
+TorrServer is the sole source of truth. The service reads its category, metadata and FileStats, then materializes independent Jellyfin and Kodi/Elementum output trees. No external metadata provider is queried.
 
 ## Output model
 
@@ -35,6 +35,7 @@ Default root:
 - `tv`: one `.strm` per playable video file, with the original zero-based FileStats order passed as `oindex`.
 - Playback URI uses `plugin://plugin.video.elementum/play?uri=<url-encoded-full-magnet>`.
 - The Kodi output is read-only: deleting a Kodi STRM never removes the TorrServer source.
+- Kodi path components are sanitized for Windows/SMB clients: forbidden punctuation and reserved device names are handled while `.strm`/`.nfo` extensions and readable names are preserved. Jellyfin's historical path naming is unchanged.
 
 Default root:
 
@@ -57,83 +58,21 @@ Each output has its own:
 
 Manifest state is never copied between roots.
 
-## Category resolution
+## Category and quality roots
 
-Category controls the first directory level of each output tree: `movie`, `tv` or `_uncategorized`.
+Category is taken only from the category field already present in TorrServer. Supported movie and tv values are preserved. Missing, blank, or unsupported values—including anime—go to _uncategorized. Category is never guessed from title, filename, or external lookup.
 
-Resolution order:
+The two quality roots are 4K and 1080p. 4K is used only when usable ffprobe data already embedded in TorrServer torrent metadata reports a video dimension of at least 3840 pixels. If ffprobe is absent or does not prove 4K, the root is 1080p. Structured quality fields and title markers already stored in TorrServer data may supply a visible basename label, but never promote a torrent into 4K. Cached NFOs may preserve technical stream details for the exact source file, but do not determine category, root, or display label.
 
-1. A non-empty TorrServer category that normalizes to `movie` or `tv` wins.
-2. If the TorrServer category is genuinely blank, torr2strm may use the category from an exact JacRed BTIH/infoHash match.
-3. If no usable category is found, the torrent stays under `_uncategorized`.
+torr2strm does not call JacRed, Prowlarr, /ffp/, or any other metadata/probing service. It does not run local ffprobe. A 1080p root does not claim every release in it is actually 1080p.
 
-Important details:
-
-- JacRed movie categories map to `movie`; TV/series categories map to `tv`.
-- Anime is deliberately kept in `_uncategorized`; it is never silently treated as TV.
-- A non-empty TorrServer category other than `movie` or `tv` is treated as unknown and remains `_uncategorized`. Because the source field was non-empty, JacRed does not override it.
-- The program never guesses movie versus TV from title text.
-
-The second directory level is a fixed two-way split: `4K` if any already-available source proves 4K-class resolution; otherwise `1080p`. The root uses all existing evidence, not a new media probe, and does not claim that every file in either branch has that branch's nominal quality.
-
-Kodi's normalized tree is separate from Jellyfin's existing tree. Identified releases of one movie/series share a canonical logical directory under each quality root. Identified TV episodes are placed under `Season NN`; unidentified series keep the torrent release-title directory and original internal file hierarchy. Unknown IDs are never fabricated and title similarity alone never merges torrents.
-
-## JacRed and media information
-
-JacRed is optional enrichment, not the source of truth. TorrServer remains authoritative for the torrent list, hash and FileStats. `torr2strm` queries JacRed's v2 JSON API directly at `https://jac.red/api/v2.0/indexers/all/results`. This is the method used by the existing `jacred2prowlarr` client; it does not depend on Prowlarr or Torznab XML. The API request uses `q`, `category` (`movie_` or `tv_` when known), `limit`, and `year` when it can be extracted from the title.
-
-### How a JacRed match is found
-
-1. torr2strm prepares up to four title candidates from the TorrServer title, localized/original-title variants, and available metadata title fields; it avoids searching standalone years and codec/audio fragments.
-2. It queries JacRed's `GET /api/v2.0/indexers/all/results` endpoint as JSON. The result list is in the `Results` array; native fields such as `Title`, `MagnetUri`, `Category`, and `info` are normalized for the importer.
-3. Search results are not accepted merely because their titles look similar. A valid native hash field or the BTIH extracted from `MagnetUri` must equal the TorrServer hash; a details-page URL is not a hash.
-4. If several exact matches exist, the implementation prefers the result with usable ffprobe data, then a magnet link, then recognizable category information. All enrichment fields are taken from that same selected result.
-
-An exact JacRed result can provide:
-
-- a full ffprobe stream payload, if the result contains usable video-stream data;
-- category information, but only when TorrServer's category field is blank;
-- a magnet URL for the Kodi/Elementum output, when present;
-- additional trustworthy provider IDs, when present.
-
-JacRed cannot change the category when TorrServer already supplies a non-empty category. Anime remains `_uncategorized`.
-
-### Quality classification without new ffprobe requests
-
-torr2strm does **not** run local ffprobe and does **not** call TorrServer's `/ffp/{hash}/{file_id}` endpoint. This intentionally avoids probing every new movie/episode just to decide which of the two output roots it belongs in.
-
-Only data that is already available is considered:
-
-1. A valid NFO already tracked for this exact torrent file, if present.
-2. ffprobe JSON already attached to a hash-exact JacRed release result or embedded in torrent/release metadata.
-3. Explicit structured quality/resolution fields in TorrServer metadata or an exact-hash JacRed result.
-4. Explicit resolution/interlace/HDR/Dolby Vision markers in the release title.
-
-A metadata field or release title cannot establish quality from source/codec words alone: `WEB-DL`, `BluRay`, `HEVC` and `HD` are not proof of a particular resolution. An exact JacRed hash match is required before its ffprobe or quality fields may be used. The matcher checks all available hash candidates independently; a result-page URL or non-matching GUID cannot mask a valid magnet hash.
-
-#### Quality root and display label are separate
-
-There are only two roots: `4K` and `1080p`. The root uses an affirmative-evidence rule: **if any available source supplies evidence of 4K-class resolution, the torrent goes into `4K`; otherwise it goes into `1080p`**. A lower-quality value from one source does not cancel a 4K claim found in another source.
-
-The display label is selected from the highest-priority available evidence, in the order listed above. For example, a cached ffprobe label of `720p` and a release title containing `2160p` can produce a `4K` root but retain `720p` as the display label. The root is a grouping/access branch, not a promise that every release in it is actually 4K.
-
-If no source contains a usable quality value, the item goes to `1080p` and its basename has **no quality suffix**. Unknown quality is never relabelled as `1080p` merely because it lives in that root.
-
-When an existing ffprobe payload is available for the release, its technical stream details may be written into the matching primary-file NFO. Existing per-file NFOs are reused when valid. If no ffprobe data already exists for an item, torr2strm writes the NFO's identity fields only; it does not probe the media to fill in stream details.
-
-Legacy `[quality]` timeout/retry settings may remain in an existing TOML file, but v1.4.1 no longer uses them and no ffprobe binary or `/ffp/status` check is required.
+Kodi remains independent from Jellyfin's existing tree. Identified releases share canonical logical folders only when trusted movie/series IDs already exist in TorrServer metadata. Unknown IDs are never fabricated and title similarity never merges torrents.
 
 ## Magnet handling for Kodi
 
-TorrServer status does not expose the original magnet in its standard status structure. The service therefore prefers, in order:
+TorrServer's standard status may not expose the original magnet link. The service uses a magnet URI already present in the TorrServer torrent's custom data. If none is available, it constructs a BTIH magnet from the TorrServer hash and title. No external lookup is performed. The URI is URL-encoded as Elementum's uri parameter.
 
-1. a magnet found in TorrServer custom `data`;
-2. an exact JacRed match `magnetUrl`/magnet-bearing URL;
-3. a constructed BTIH magnet with `xt=urn:btih:<hash>&dn=<title>`.
-
-The complete magnet is URL-encoded as the value of the Elementum `uri` parameter.
-
-For TV the `oindex` value is the zero-based original FileStats order, not the one-based TorrServer `/play` file id and not the sorted human/path order.
+For TV, oindex is the zero-based original FileStats order, not the one-based TorrServer /play file ID and not the sorted path order.
 
 ## NFO responsibility boundary
 
@@ -192,30 +131,23 @@ Main sections:
 - `[torrserver]`: TorrServer base URL and API/metadata timeouts.
 - `[outputs.jellyfin]` and `[outputs.kodi]`: output roots, independent manifests and enable flags. Only Jellyfin can enable reverse deletion.
 - `[sync]`: eligible video extensions and the fallback season for TV files whose season cannot be inferred.
-- `[quality]`: legacy timeout/retry settings; ignored in v1.4.1 and removable.
-- `[jacred]`: public JacRed v2 JSON API base URL, result limit, timeout and retries. No Prowlarr indexer ID or API key is required.
+- Legacy `[quality]` timeout/retry settings and old `[jacred]` sections are ignored in v1.4.5; they may be removed from the config file.
+- No external indexer/provider configuration exists in v1.4.5. Older `[jacred]` sections are ignored and may be removed from `/etc/torr2strm/config.toml`.
 - `[logging]`: log verbosity.
 
-Command-line parameters:
+Command-line parameters (there are no external-source override flags):
 
 ```text
 --config PATH              Use a configuration file other than /etc/torr2strm/config.toml
 --dry-run                  Log planned output changes without writing/deleting output files or removing torrents
 --version                  Print the installed version and exit
---jacred URL               Override the configured JacRed base URL for this run
---no-jacred                Disable JacRed for this run
---jacred-api-key KEY       Deprecated compatibility option; ignored by the public v2 API client
---jacred-indexer-id ID     Deprecated compatibility option; ignored by the public v2 API client
---jacred-limit N           Override JacRed result limit (1–1000)
 ```
 
-`--jacred` and `--no-jacred` are mutually exclusive. The default URL is `https://jac.red`; set it to empty to disable JacRed. `api_key`, `indexer_id`, `--jacred-api-key`, and `--jacred-indexer-id` are legacy compatibility settings and are ignored by the direct v2 JSON client.
 
 Example:
 
 ```bash
 sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config.toml --dry-run
-sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --jacred https://jac.red --jacred-limit 1000 --dry-run
 ```
 
 ## Service behavior
@@ -224,6 +156,8 @@ The service is a systemd oneshot triggered by `torr2strm.timer`.
 
 Recoverable media-information failures no longer prevent the STRM from being materialized if quality can be determined from structured metadata/title, or defaulted to the `1080p` root. An identity-only NFO is written if per-file ffprobe data is unavailable. Fatal configuration/source errors still exit non-zero.
 
-## Upgrade / clean start
+## Upgrade and deployment
 
-Software version is `1.4.0`, manifest format is v5, and NFO format is v3. Manifest v4 and older schemas are intentionally rejected. For the development rollout, do not migrate old trees: stop the timer/service, disable Jellyfin reverse deletion temporarily, clear all contents (including `.torr2strm` state) of the explicitly configured Jellyfin and Kodi roots, install the new program, recreate state and run a manual sync. Never clear any parent directory outside the configured roots. See [ROADMAP.md](ROADMAP.md) for the implemented behavior contract and tests.
+Software version: v1.4.5 candidate; manifest format v5; NFO format v3. No release tag has been created yet, and the candidate must pass the mini-PC dry-run before being treated as production-approved.
+
+For an in-place upgrade, stop/disable the timer, back up the application script and configuration file, then run the repository installer. Preserve both configured media roots and their .torr2strm state. Do not clear or recreate either output tree as part of this upgrade. The installer leaves an already-disabled timer disabled; perform a manual --dry-run first and review the logs before any real sync.

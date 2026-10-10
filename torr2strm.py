@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.4 - TorrServer -> multiple STRM materialized trees.
+"""torr2strm 1.4.5 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
-- TorrServer is the source of truth.
-- One discovery/enrichment pass is shared by all output trees.
-- Category is normalized to movie/tv; an unknown category may be resolved from an exact JacRed match; anime stays _uncategorized.
-- Each output tree has its own root, marker and manifest.
-- Jellyfin output: movie and TV are file-level STRM using TorrServer /play/{hash}/{file_id}.
-- Kodi/Elementum output: movies are torrent-level STRM; TV is file-level STRM using Elementum + oindex (zero-based FileStats order).
-- Both outputs receive the same NFO content for the represented media file.
-- Quality is classified only from real ffprobe dimensions: 4K or 1080p.
-- NFO contains identification/base metadata plus fileinfo/streamdetails.
-- Existing valid NFOs are reusable media-info cache across output trees.
-- Only Jellyfin output can have reverse deletion of the TorrServer torrent; Kodi output is read-only.
-- Reverse deletion uses TorrServer action=rem only; never action=drop.
-- JacRed enrichment uses the public JacRed v2 JSON API directly; no Prowlarr dependency is required.
+- TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
+- No external indexer or metadata source is queried.
+- Missing or unsupported TorrServer category maps to _uncategorized; category is never guessed.
+- A torrent goes into 4K only when an already-present ffprobe payload in TorrServer data proves 4K dimensions; otherwise it goes into 1080p.
+- Jellyfin keeps its existing output layout; Kodi/Elementum keeps its normalized movie/TV tree and playback semantics.
+- Cached NFOs may be reused for exact-file streamdetails, but never determine category, quality root, or display quality label.
+- Only Jellyfin output may reverse-delete a TorrServer torrent, using action=rem only; never action=drop.
 - Recoverable per-torrent source errors do not make the service exit non-zero.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,7 +35,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.4"
+VERSION = "1.4.6"
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
@@ -146,6 +141,19 @@ def sanitize_component(value: str) -> str:
     value = re.sub(r"\s+", " ", value).strip().rstrip(".")
     return value or "_"
 
+def sanitize_kodi_component(value: str) -> str:
+    """Make one Kodi path component safe for Windows/SMB clients.
+
+    Jellyfin keeps its historical Linux naming. Kodi replaces characters
+    forbidden in Windows names so Samba does not expose generated short aliases.
+    """
+    clean = sanitize_component(value)
+    clean = re.sub(r'[<>:"\\\\|?*]', " - ", clean)
+    clean = re.sub(r"\s+", " ", clean).strip().rstrip(". ")
+    if re.fullmatch(r"(?i)(?:CON|PRN|AUX|NUL|COM(?:[1-9]|[¹²³])|LPT(?:[1-9]|[¹²³]))(?:\..*)?", clean):
+        clean = "_" + clean
+    return clean or "_"
+
 
 def truncate_utf8(value: str, max_bytes: int) -> str:
     raw = value.encode("utf-8")
@@ -212,7 +220,7 @@ def quality_from_dimensions(width: int, height: int) -> str:
 
 
 def usable_ffprobe(payload: Any) -> dict[str, Any] | None:
-    """Accept JacRed/TorrServer ffprobe JSON and require a real video stream."""
+    """Accept embedded ffprobe JSON and require a real video stream."""
     if isinstance(payload, list):
         streams = payload
     elif isinstance(payload, dict):
@@ -441,6 +449,12 @@ def quality_root_from_label(label: str | None) -> str:
     return "4K" if match else "1080p"
 
 
+def quality_root_from_probe_payload(payload: Any) -> str:
+    """Select 4K only from usable ffprobe embedded in TorrServer metadata."""
+    label = quality_label_from_probe(payload)
+    return "4K" if label is not None and quality_root_from_label(label) == "4K" else "1080p"
+
+
 def quality_marker(label: str | None) -> str:
     return f" — {label}" if label else ""
 
@@ -448,7 +462,7 @@ def quality_marker(label: str | None) -> str:
 
 def bounded_kodi_leaf(title: str, quality_label: str | None, short_hash: str, file_ordinal: int | None = None) -> str:
     """Keep quality/hash suffixes intact even when a human title exceeds NAME_MAX."""
-    prefix = sanitize_component(title)
+    prefix = sanitize_kodi_component(title)
     suffix = f"{quality_marker(quality_label)} [{short_hash}]"
     if file_ordinal is not None:
         suffix += f" [file{file_ordinal:02d}]"
@@ -564,13 +578,13 @@ def explicit_display_title(snap: "TorrentSnapshot", *, tv: bool) -> tuple[str, s
     year = display_year(metadata, snap.title, tv=tv)
     if year:
         title = re.sub(rf"\s*\({re.escape(year)}\)\s*$", "", title).strip()
-    return sanitize_component(title or snap.title), year, priority
+    return sanitize_kodi_component(title or snap.title), year, priority
 
 
 def clean_media_component(title: str, year: str | None) -> str:
-    base = sanitize_component(title)
+    base = sanitize_kodi_component(title)
     if year and not re.search(rf"\({re.escape(year)}\)$", base):
-        base = sanitize_component(f"{base} ({year})")
+        base = sanitize_kodi_component(f"{base} ({year})")
     return base
 
 
@@ -1100,7 +1114,6 @@ class TorrentSnapshot:
     hash: str
     title: str
     category: str
-    category_explicit: bool
     metadata: dict[str, Any]
     files: tuple[TorrentFile, ...]
     magnet: str | None = None
@@ -1129,7 +1142,7 @@ class TorrServerClient:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url, data=body, method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "torr2strm/1.4.1"},
+            headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "torr2strm/1.4.6"},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout if timeout is None else timeout) as resp:
@@ -1173,7 +1186,7 @@ class TorrServerClient:
         url = f"{self.base_url}/playlist?{query}"
         req = urllib.request.Request(
             url, method="GET",
-            headers={"Accept": "audio/x-mpegurl,text/plain,*/*", "User-Agent": "torr2strm/1.4.1"},
+            headers={"Accept": "audio/x-mpegurl,text/plain,*/*", "User-Agent": "torr2strm/1.4.6"},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -1209,7 +1222,6 @@ def parse_snapshot(data: dict[str, Any], fallback_hash: str) -> TorrentSnapshot:
     if not isinstance(title, str) or not title.strip():
         raise ValueError(f"torrent {torrent_hash}: no title/name")
     raw_category = str(get_field(data, "category", default="") or "").strip().lower()
-    category_explicit = bool(raw_category)
     category = raw_category if raw_category in {"movie", "tv"} else "_uncategorized"
 
     metadata = parse_json_object(get_field(data, "data", default=None))
@@ -1246,7 +1258,7 @@ def parse_snapshot(data: dict[str, Any], fallback_hash: str) -> TorrentSnapshot:
     magnet = extract_magnet(data)
     if magnet is None:
         magnet = extract_magnet(metadata)
-    return TorrentSnapshot(torrent_hash, title.strip(), category, category_explicit, metadata, tuple(files), magnet=magnet)
+    return TorrentSnapshot(torrent_hash, title.strip(), category, metadata, tuple(files), magnet=magnet)
 
 
 def extract_list_embedded_torrent(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -1345,75 +1357,6 @@ def write_manifest_if_changed(path: Path, data: dict[str, Any]) -> bool:
     return True
 
 
-@dataclass(frozen=True)
-class JacRedMatch:
-    result: dict[str, Any]
-    ffprobe: dict[str, Any] | None
-    magnet: str | None
-    category: str | None
-    query: str
-
-
-def category_from_jacred_result(result: dict[str, Any]) -> str | None:
-    """Map an exact JacRed v2 result to movie/tv/_uncategorized without guessing by title."""
-    values: list[Any] = []
-    for key in ("category", "categories", "cat", "Category"):
-        if key in result:
-            values.append(result[key])
-    info = result.get("info") if isinstance(result.get("info"), dict) else {}
-    for key in ("category", "categories", "cat", "type", "contentType"):
-        if key in info:
-            values.append(info[key])
-    for key in ("type", "contentType"):
-        if key in result:
-            values.append(result[key])
-
-    flat: list[Any] = []
-    for value in values:
-        if isinstance(value, (list, tuple, set)):
-            flat.extend(value)
-        else:
-            flat.append(value)
-
-    saw_anime = False
-    saw_movie = False
-    saw_tv = False
-    for value in flat:
-        text = str(value or "").strip().lower()
-        if not text:
-            continue
-        if "anime" in text:
-            saw_anime = True
-            continue
-        if text in {"movie", "movies", "film", "films"}:
-            saw_movie = True
-            continue
-        if text in {"tv", "series", "show", "episode", "episodes", "tvshow"}:
-            saw_tv = True
-            continue
-        for token in re.split(r"[\s,;:/|]+", text):
-            if token.isdigit():
-                number = int(token)
-                if 2060 <= number < 3000 or 2000 <= number < 2100:
-                    saw_movie = True
-                elif number == 5060:
-                    saw_anime = True
-                elif 5000 <= number < 6000:
-                    saw_tv = True
-        if re.search(r"\b5000\b|\btv[-_ ]?show\b|\bseries\b", text):
-            saw_tv = True
-        if re.search(r"\b2000\b|\bmovie[s]?\b", text):
-            saw_movie = True
-
-    if saw_anime:
-        return "_uncategorized"
-    if saw_movie and not saw_tv:
-        return "movie"
-    if saw_tv and not saw_movie:
-        return "tv"
-    return None
-
-
 def provider_ids_from_mapping(mapping: dict[str, Any] | None) -> dict[str, str]:
     if not isinstance(mapping, dict):
         return {}
@@ -1425,271 +1368,11 @@ def provider_ids_from_mapping(mapping: dict[str, Any] | None) -> dict[str, str]:
     return result
 
 
-def normalize_jacred_v2_results(payload: Any) -> list[dict[str, Any]]:
-    """Normalize JacRed v2 JSON items for the rest of the enrichment pipeline."""
-    if isinstance(payload, list):
-        raw_results = payload
-    elif isinstance(payload, dict):
-        raw_results = get_field(payload, "Results", "results", default=[])
-        if raw_results is None:
-            raw_results = []
-    else:
-        raise RuntimeError("JacRed v2 response must be an object with a Results array")
-    if not isinstance(raw_results, list):
-        raise RuntimeError("JacRed v2 response field Results is not an array")
-
-    results: list[dict[str, Any]] = []
-    for raw in raw_results:
-        if not isinstance(raw, dict):
-            continue
-        item = dict(raw)
-        info = get_field(item, "info", "Info", default={})
-        info = info if isinstance(info, dict) else {}
-
-        title = str(get_field(item, "Title", "title", default="") or "").strip()
-        details = str(get_field(item, "Details", "details", default="") or "").strip()
-        magnet_value = get_field(item, "MagnetUri", "magnetUrl", "magnet", default="")
-        magnet = extract_magnet(magnet_value) or ""
-        categories = get_field(item, "Category", "categories", "category", default=[])
-        if not isinstance(categories, list):
-            categories = [categories] if categories not in (None, "") else []
-
-        raw_hash = get_field(item, "infoHash", "InfoHash", "Hash", "hash", "btih", default="")
-        info_hash = ""
-        raw_hash_text = urllib.parse.unquote(str(raw_hash or "")).strip()
-        if re.fullmatch(r"[0-9a-fA-F]{40}", raw_hash_text):
-            info_hash = raw_hash_text.lower()
-        elif raw_hash_text:
-            info_hash = extract_btih(raw_hash_text) or ""
-        if not info_hash and magnet:
-            info_hash = extract_btih(magnet) or ""
-
-        year = get_field(item, "year", "Year", default=None)
-        if not year:
-            year = get_field(info, "relased", "released", "year", "releaseYear", default=None)
-        if not year:
-            match_year = re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", title)
-            year = match_year.group(0) if match_year else ""
-
-        normalized = dict(item)
-        normalized.update({
-            "title": title,
-            "originaltitle": get_field(info, "originalname", "originalName", default=""),
-            "guid": details or str(get_field(item, "guid", "Guid", default="") or ""),
-            "infoHash": info_hash,
-            "hash": info_hash,
-            "magnetUrl": magnet,
-            "downloadUrl": magnet,
-            "detailsUrl": details,
-            "category": categories,
-            "categories": categories,
-            "year": str(year or ""),
-            "seeders": get_field(item, "Seeders", "seeders", default=0),
-            "peers": get_field(item, "Peers", "peers", default=0),
-            "size": get_field(item, "Size", "size", default=get_field(info, "sizeName", "size", default="")),
-        })
-        if "ffprobe" not in normalized:
-            present_probe = get_field(item, "ffprobe", "ffProbe", "mediaInfo", default=None)
-            if present_probe is not None:
-                normalized["ffprobe"] = present_probe
-        # Keep nested metadata intact for quality and provider-ID resolution.
-        results.append(normalized)
-    return results
-
-
-class JacRedClient:
-    """Optional metadata provider using JacRed v2 JSON API directly."""
-
-    def __init__(self, cfg: dict[str, Any]):
-        self.base_url = str(cfg.get("url", "")).strip().rstrip("/")
-        self.api_key = str(cfg.get("api_key", "")).strip()  # Legacy Prowlarr-era option; public JacRed v2 does not require it.
-        if self.api_key:
-            LOG.warning("JACRED_API_KEY_IGNORED direct JacRed v2 API does not use the configured api_key")
-        self.indexer_id = int(cfg.get("indexer_id", 0))  # Legacy Prowlarr-only setting; unused by direct JacRed v2 JSON.
-        if self.indexer_id > 0:
-            LOG.warning("JACRED_INDEXER_ID_IGNORED value=%s; direct public JacRed v2 JSON searches all trackers", self.indexer_id)
-        self.limit = int(cfg.get("limit", 1000))
-        self.timeout_sec = float(cfg.get("timeout_sec", 30))
-        self.retries = int(cfg.get("retries", 0))
-        self._cache: dict[tuple[str, str, int, int], list[dict[str, Any]]] = {}
-        self._last_upstream_finished = 0.0
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self.base_url)
-
-    def _get_json(self, query: str, search_type: str) -> list[dict[str, Any]]:
-        key = (query, search_type, 0, self.limit)
-        if key in self._cache:
-            return self._cache[key]
-
-        params: list[tuple[str, str]] = [
-            ("q", query),
-            ("limit", str(self.limit)),
-        ]
-        normalized_type = search_type.lower().strip()
-        if normalized_type in {"movie", "moviesearch"}:
-            params.append(("category", "movie_"))
-        elif normalized_type in {"tvsearch", "tv"}:
-            params.append(("category", "tv_"))
-        year = re.search(r"(?<!\d)(?:19|20)\d{2}(?!\d)", query)
-        if year:
-            params.append(("year", year.group(0)))
-
-        endpoint = self.base_url
-        if not endpoint.lower().endswith("/api/v2.0/indexers/all/results"):
-            endpoint = f"{endpoint}/api/v2.0/indexers/all/results"
-        url = f"{endpoint}?{urllib.parse.urlencode(params)}"
-        # Match the headers used by the established jacred2prowlarr source client.
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "JacRed-V2-Torznab-Adapter/2.2.10",
-        }
-        last_error: Exception | None = None
-        for attempt in range(1, self.retries + 2):
-            # Keep the one-second minimum interval used by the previous client.
-            wait = 1.0 - (time.monotonic() - self._last_upstream_finished)
-            if wait > 0:
-                time.sleep(wait)
-            req = urllib.request.Request(url, method="GET", headers=headers)
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout_sec) as resp:
-                    raw = resp.read()
-                data = json.loads(raw.decode("utf-8")) if raw else {"Results": []}
-                results = normalize_jacred_v2_results(data)
-                self._cache[key] = results
-                LOG.info("JACRED_SEARCH query=%r type=%s endpoint=%s results=%d", query, normalized_type, endpoint, len(results))
-                return results
-            except urllib.error.HTTPError as exc:
-                body = exc.read().decode("utf-8", "replace")
-                last_error = RuntimeError(f"HTTP {exc.code}: {body[:300]}")
-            except urllib.error.URLError as exc:
-                last_error = RuntimeError(str(exc.reason))
-            except TimeoutError as exc:
-                last_error = RuntimeError(str(exc))
-            except Exception as exc:
-                last_error = exc
-            finally:
-                self._last_upstream_finished = time.monotonic()
-            if attempt <= self.retries:
-                time.sleep(0.5)
-        LOG.warning("JACRED_SEARCH_FAILED query=%r type=%s endpoint=%s error=%s", query, normalized_type, endpoint, last_error)
-        self._cache[key] = []
-        return []
-
-    def _candidate_queries(self, torrent: TorrentSnapshot) -> list[str]:
-        primary = (
-            extract_tv_series_name(torrent.title, torrent.files)
-            if torrent.category == "tv"
-            else torrent.title
-        )
-        raw_candidates: list[str] = [primary]
-
-        # JacRed titles often look like "Localized / Original / year / audio...".
-        # Use only the first two title segments as variants, not years or audio/source fragments.
-        title_head = str(primary or "")
-        if " | " in title_head:
-            title_head = title_head.split(" | ", 1)[0].strip()
-        slash_parts = [part.strip() for part in re.split(r"\s+/\s+", title_head)]
-        if len(slash_parts) > 1:
-            raw_candidates.extend(slash_parts[:2])
-
-        for key in ("originalname", "originalName", "name", "seriesTitle", "seriesName",
-                    "title", "originaltitle", "originalTitle"):
-            value = get_field(torrent.metadata, key, default=None)
-            if isinstance(value, str) and value.strip():
-                raw_candidates.append(value)
-
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for value in raw_candidates:
-            text = html.unescape(str(value)).strip()
-            text = re.sub(r"\s+", " ", text)
-            text = text.strip(" !|/\\-_.,")
-            if not text or re.fullmatch(r"(?:19|20)\d{2}", text):
-                continue
-            if re.fullmatch(r"(?i)(?:2160p|1080p|1080i|720p|576p|480p|4k|web-dl|webrip|bdrip|bluray|hevc)", text):
-                continue
-            if text in seen:
-                continue
-            seen.add(text)
-            cleaned.append(text)
-        return cleaned[:4]
-
-    def find_match(self, torrent: TorrentSnapshot) -> JacRedMatch | None:
-        if not self.enabled:
-            return None
-        search_type = "tvsearch" if torrent.category == "tv" else "movie" if torrent.category == "movie" else "search"
-        target = canonical_hash(torrent.hash)
-        exact: list[tuple[dict[str, Any], str]] = []
-        for query in self._candidate_queries(torrent):
-            for result in self._get_json(query, search_type):
-                # Search APIs commonly use "guid" for a result-page URL, not a
-                # BTIH. Inspect each possible source independently so an
-                # unusable non-empty GUID cannot mask a valid magnet URL/hash.
-                mappings = [result]
-                info = result.get("info")
-                if isinstance(info, dict):
-                    mappings.append(info)
-                hash_candidates: list[Any] = []
-                for mapping in mappings:
-                    for key in ("infoHash", "hash", "btih", "guid", "magnet", "magnetUrl", "downloadUrl", "torrentUrl"):
-                        value = mapping.get(key)
-                        if value not in (None, ""):
-                            hash_candidates.append(value)
-                target_found = False
-                for candidate in hash_candidates:
-                    candidate_text = urllib.parse.unquote(str(candidate)).strip()
-                    candidates_for_value: list[str] = []
-                    if re.fullmatch(r"[0-9a-fA-F]{40}", candidate_text):
-                        candidates_for_value.append(candidate_text.lower())
-                    elif re.fullmatch(r"[A-Za-z2-7]{32}", candidate_text, flags=re.IGNORECASE):
-                        decoded = extract_btih(f"urn:btih:{candidate_text}")
-                        if decoded:
-                            candidates_for_value.append(decoded)
-                    else:
-                        decoded = extract_btih(candidate_text)
-                        if decoded:
-                            candidates_for_value.append(decoded)
-                    if target in candidates_for_value:
-                        target_found = True
-                        break
-                if target_found:
-                    exact.append((result, query))
-
-        if not exact:
-            LOG.info("JACRED_MISS hash=%s", target)
-            return None
-
-        # Prefer one exact result that has a real ffprobe and a magnet. Keep all derived values from the same result.
-        ranked = sorted(
-            exact,
-            key=lambda pair: (
-                usable_ffprobe(pair[0].get("ffprobe")) is not None,
-                bool(extract_magnet(pair[0].get("magnetUrl") or pair[0].get("downloadUrl"))),
-                category_from_jacred_result(pair[0]) is not None,
-            ),
-            reverse=True,
-        )
-        result, query = ranked[0]
-        payload = usable_ffprobe(result.get("ffprobe"))
-        magnet = extract_magnet(result.get("magnetUrl") or result.get("downloadUrl"))
-        category = category_from_jacred_result(result)
-        if payload is None:
-            LOG.warning("JACRED_MATCH_NO_FFPROBE hash=%s query=%r", target, query)
-        LOG.info(
-            "JACRED_MATCH hash=%s query=%r streams=%s category=%s magnet=%s",
-            target, query, len(payload["streams"]) if payload else 0, category or "unknown", bool(magnet),
-        )
-        return JacRedMatch(result=result, ffprobe=payload, magnet=magnet, category=category, query=query)
-
-
 class MediaInfoResolver:
     """Resolve media info once and share it between all output trees."""
 
-    def __init__(self, cfg: dict[str, Any], client: TorrServerClient, output_manifests: list[tuple[Path, dict[str, Any]]]):
+    def __init__(self, cfg: dict[str, Any], output_manifests: list[tuple[Path, dict[str, Any]]]):
         self.cfg = cfg
-        self.client = client
         self.extensions = cfg["sync"]["video_extensions"]
         self.output_manifests = output_manifests
         self.stats = {"torrserver_ffprobe": 0, "nfo_reused": 0}
@@ -1725,36 +1408,6 @@ class MediaInfoResolver:
                 return True
         return False
 
-    @staticmethod
-    def _quality_details_from_nfo(path: Path) -> tuple[str, str | None] | None:
-        if not MediaInfoResolver._nfo_is_usable(path):
-            return None
-        try:
-            root = MediaInfoResolver._read_nfo_root(path)
-            node = root.find("./fileinfo/streamdetails/video")
-            if node is None:
-                return None
-            width = int((node.findtext("width") or "0").strip())
-            height = int((node.findtext("height") or "0").strip())
-            if width <= 0 or height <= 0:
-                return None
-            stream: dict[str, Any] = {}
-            hdr = str(node.findtext("hdrtype") or "").lower()
-            if "dolby" in hdr or hdr in {"dv", "dolbyvision"}:
-                stream["dv_profile"] = 1
-            elif hdr:
-                stream["color_transfer"] = "smpte2084"
-            if (node.findtext("scantype") or "").lower() == "interlaced":
-                stream["field_order"] = "tt"
-            return quality_from_dimensions(width, height), quality_label_from_dimensions(width, height, stream)
-        except Exception:
-            return None
-
-    @staticmethod
-    def _quality_from_nfo(path: Path) -> str | None:
-        details = MediaInfoResolver._quality_details_from_nfo(path)
-        return details[0] if details else None
-
     def _cached_nfo(self, torrent: TorrentSnapshot, file: TorrentFile) -> tuple[Path, str] | None:
         """Find a valid existing NFO for this exact source file in any enabled output manifest."""
         for root, manifest in self.output_manifests:
@@ -1780,7 +1433,6 @@ class MediaInfoResolver:
     def prepare(
         self,
         torrent: TorrentSnapshot,
-        match: JacRedMatch | None,
         required_file_ids: set[int],
     ) -> tuple[str, str | None, dict[int, dict[str, Any]], dict[int, str], dict[int, str]]:
         """Resolve quality from data already available; never call TorrServer /ffp/."""
@@ -1806,52 +1458,36 @@ class MediaInfoResolver:
             sources[file_id] = "nfo"
             self.stats["nfo_reused"] += 1
 
-        # Only read ffprobe payloads already attached to the torrent/release or
-        # cached NFO. Never request /ffp/ and never probe each episode to classify it.
-        primary_cached = cached.get(primary.file_id)
-        cached_label: str | None = None
-        if primary_cached:
-            details = self._quality_details_from_nfo(primary_cached[0])
-            if details:
-                cached_label = details[1]
-                LOG.info("QUALITY_EVIDENCE hash=%s label=%s via=cached_nfo path=%s", torrent.hash, cached_label, primary_cached[0])
-
-        existing_payloads: list[tuple[str, dict[str, Any]]] = []
-        # JacRedMatch is only created after the caller validates an exact torrent hash match.
-        if match is not None:
-            matched_payload = usable_ffprobe(match.ffprobe) if match.ffprobe is not None else None
-            if matched_payload is None:
-                matched_payload = ffprobe_payload_from_metadata(match.result)
-            if matched_payload is not None:
-                existing_payloads.append(("jacred_ffprobe", matched_payload))
+        # Classification is self-contained and TorrServer-only. Cached NFOs
+        # preserve exact-file streamdetails but cannot classify the root/label.
         snapshot_payload = ffprobe_payload_from_metadata(torrent.metadata)
+        existing_payloads: list[tuple[str, dict[str, Any]]] = []
         if snapshot_payload is not None:
             existing_payloads.append(("torrserver_metadata_ffprobe", snapshot_payload))
 
         evidence: list[tuple[str, str]] = []
-        if cached_label:
-            evidence.append(("cached_nfo", cached_label))
         for source, payload in existing_payloads:
             label = quality_label_from_probe(payload)
             if label:
                 evidence.append((source, label))
         for label in quality_labels_from_metadata(torrent.metadata):
             evidence.append(("structured_torrent_quality", label))
-        if match is not None:
-            for label in quality_labels_from_metadata(match.result):
-                evidence.append(("structured_jacred_quality", label))
         title_label = quality_label_from_text(torrent.title)
         if title_label:
             evidence.append(("release_title", title_label))
 
-        # Display label follows the preferred available source, but the root is
-        # affirmative-evidence based: ANY source that identifies 4K wins. A later
-        # lower-quality label cannot cancel an earlier/later 4K claim.
+        # Only valid ffprobe already embedded in TorrServer data can select 4K.
+        # Missing/invalid/non-4K probe data always selects the 1080p root.
         quality_label = evidence[0][1] if evidence else None
-        quality_root = "4K" if any(quality_root_from_label(label) == "4K" for _, label in evidence) else "1080p"
+        quality_root = quality_root_from_probe_payload(snapshot_payload)
+        LOG.info(
+            "QUALITY_ROOT hash=%s result=%s via=%s",
+            torrent.hash, quality_root,
+            "torrserver_ffprobe" if snapshot_payload is not None else "ffprobe_unavailable",
+        )
 
-        # Only an ffprobe payload already present in the release may supply
-        # streamdetails to its primary-file NFO. Cached per-file NFOs take precedence.
+        # Only ffprobe already present in TorrServer metadata may supply
+        # streamdetails to the primary-file NFO. Cached per-file NFOs take precedence.
         if primary.file_id not in cached and existing_payloads:
             source, payload = existing_payloads[0]
             probes[primary.file_id] = payload
@@ -1987,7 +1623,7 @@ class OutputRunner:
         if snap.quality not in {"4K", "1080p"}:
             raise RuntimeError(f"torrent {snap.hash}: missing quality")
         if self.spec.name == "kodi":
-            name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_component(snap.title))
+            name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_kodi_component(snap.title))
         else:
             # Jellyfin's existing per-torrent naming and folder behavior is unchanged.
             name = build_torrent_dir_name(snap.title, snap.metadata, snap.hash, snap.category, snap.files)
@@ -2246,7 +1882,7 @@ class OutputRunner:
             else:
                 # Unidentified TV/movie torrents and unsupported categories retain
                 # their own torrent-title directory and original inner hierarchy.
-                name = sanitize_component(snap.title)
+                name = sanitize_kodi_component(snap.title)
                 fallback.setdefault((snap.category, quality_root, name.casefold()), []).append(h)
                 self.kodi_display_title_by_hash[h] = name
 
@@ -2269,7 +1905,7 @@ class OutputRunner:
             component = clean_media_component(title, year)
             if len(collisions.get((category, quality_root, component.casefold()), set())) > 1:
                 kind, value = identity.split(":", 1)
-                component = sanitize_component(f"{component} [{kind}-{value}]")
+                component = sanitize_kodi_component(f"{component} [{kind}-{value}]")
             for _, _, _, h in grouped[key]:
                 self.kodi_dirname_by_hash[h] = component
             # A shared tvshow.nfo must be stable across all releases. Store only
@@ -2288,7 +1924,7 @@ class OutputRunner:
                 self.kodi_dirname_by_hash[h] = self.kodi_display_title_by_hash[h]
             else:
                 for h in hashes:
-                    self.kodi_dirname_by_hash[h] = sanitize_component(
+                    self.kodi_dirname_by_hash[h] = sanitize_kodi_component(
                         f"{self.kodi_display_title_by_hash[h]} [{self.kodi_hash_by_torrent[h]}]"
                     )
 
@@ -2328,7 +1964,7 @@ class OutputRunner:
     ) -> dict[str, Any] | None:
         if snap.quality not in {"4K", "1080p"}:
             snap = replace(snap, quality="1080p")
-        directory_name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_component(snap.title))
+        directory_name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_kodi_component(snap.title))
         torrent_dir = safe_join(self.root, snap.category, snap.quality, directory_name)
         self._assert_no_symlink(torrent_dir.parent)
         self._assert_no_symlink(torrent_dir)
@@ -2384,7 +2020,7 @@ class OutputRunner:
                     leaf = self._kodi_episode_basename(snap, file, duplicate=duplicate)
                 else:
                     # Unknown identity: retain the source torrent's internal hierarchy.
-                    target_dir = safe_join(torrent_dir, *PurePosixPath(file.path).parent.parts)
+                    target_dir = safe_join(torrent_dir, *(sanitize_kodi_component(part) for part in PurePosixPath(file.path).parent.parts))
                     leaf = self._kodi_fallback_basename(snap, file)
                 playback = self._elementum_url(snap, file)
                 targets.append((file, target_dir, playback, leaf, normalized_tv))
@@ -2787,10 +2423,9 @@ class OutputRunner:
 
 
 class SyncCoordinator:
-    def __init__(self, cfg: dict[str, Any], client: TorrServerClient, jacred: JacRedClient, *, dry_run: bool):
+    def __init__(self, cfg: dict[str, Any], client: TorrServerClient, *, dry_run: bool):
         self.cfg = cfg
         self.client = client
-        self.jacred = jacred
         self.dry_run = dry_run
         self.outputs: list[OutputRunner] = []
         for name in ("jellyfin", "kodi"):
@@ -2808,7 +2443,6 @@ class SyncCoordinator:
                 self.outputs.append(OutputRunner(spec, cfg, client, dry_run=dry_run))
         if not self.outputs:
             raise ValueError("at least one output must be enabled")
-        self.stats = {"jacred_hits": 0, "jacred_misses": 0, "torrserver_ffprobe": 0, "nfo_reused": 0}
 
     def _get_snapshot_list(self) -> list[TorrentSnapshot]:
         raw_list = self.client.list_torrents()
@@ -2868,21 +2502,6 @@ class SyncCoordinator:
                 time.sleep(self.cfg["torrserver"]["metadata_poll_sec"])
         return snapshots
 
-    @staticmethod
-    def _merge_jacred_ids(snap: TorrentSnapshot, match: JacRedMatch | None) -> TorrentSnapshot:
-        if match is None:
-            return snap
-        metadata = dict(snap.metadata)
-        ids = provider_ids_from_mapping(match.result)
-        info = match.result.get("info") if isinstance(match.result.get("info"), dict) else None
-        if isinstance(info, dict):
-            ids2 = provider_ids(info, str(info.get("title") or ""))
-            ids.update({k: v for k, v in ids2.items() if k not in ids})
-        for kind, value in ids.items():
-            metadata.setdefault(f"{kind}id", value)
-        magnet = snap.magnet or match.magnet
-        return replace(snap, metadata=metadata, magnet=magnet)
-
     def _collect_required_files(self, snap: TorrentSnapshot) -> set[int]:
         videos = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
         if not videos:
@@ -2908,38 +2527,15 @@ class SyncCoordinator:
         raw_snapshots = self._get_snapshot_list()
         snapshot_map: dict[str, TorrentSnapshot] = {s.hash: s for s in raw_snapshots}
 
-        # Exact JacRed match is performed once per torrent, then its ffprobe/category/magnet
-        # are shared by both outputs. The query-level cache prevents duplicate HTTP calls.
-        matches: dict[str, JacRedMatch | None] = {}
-        for h, snap in snapshot_map.items():
-            if self.jacred.enabled:
-                match = self.jacred.find_match(snap)
-                matches[h] = match
-                if match is None:
-                    self.stats["jacred_misses"] += 1
-                else:
-                    self.stats["jacred_hits"] += 1
-            else:
-                matches[h] = None
-
-        enriched_map: dict[str, TorrentSnapshot] = {}
-        for h, snap in snapshot_map.items():
-            match = matches.get(h)
-            updated = self._merge_jacred_ids(snap, match)
-            if not updated.category_explicit and match is not None and match.category in {"movie", "tv"}:
-                updated = replace(updated, category=match.category)
-                LOG.info("CATEGORY hash=%s result=%s via=jacred", updated.hash, updated.category)
-            elif not updated.category_explicit and match is not None and match.category == "_uncategorized":
-                LOG.info("CATEGORY hash=%s result=_uncategorized via=jacred", updated.hash)
-            enriched_map[h] = updated
-
+        # Category, metadata, IDs and magnets remain those already present on
+        # TorrServer. No external enrichment pass is performed.
         media_by_hash: dict[str, dict[int, dict[str, Any]]] = {}
         media_sources_by_hash: dict[str, dict[int, str]] = {}
         cached_nfo_by_hash: dict[str, dict[int, str]] = {}
         quality_ready: dict[str, TorrentSnapshot] = {}
         unresolved = 0
-        resolver = MediaInfoResolver(self.cfg, self.client, manifests)
-        for h, snap in enriched_map.items():
+        resolver = MediaInfoResolver(self.cfg, manifests)
+        for h, snap in snapshot_map.items():
             old_union = None
             # Quality/state comes from either output manifest; the resolver searches exact source_path NFOs itself.
             required = self._collect_required_files(snap)
@@ -2948,7 +2544,7 @@ class SyncCoordinator:
                 unresolved += 1
                 continue
             try:
-                quality, quality_label, probes, sources, cached = resolver.prepare(snap, matches.get(h), required)
+                quality, quality_label, probes, sources, cached = resolver.prepare(snap, required)
             except Exception as exc:
                 LOG.error("QUALITY_SKIP hash=%s title=%r error=%s", h, snap.title, exc)
                 unresolved += 1
@@ -2978,13 +2574,11 @@ class SyncCoordinator:
             if output.spec.name == "jellyfin" and output.removed_hashes:
                 removed_hashes.update(output.removed_hashes)
 
-        self.stats["torrserver_ffprobe"] = 0
-        self.stats["nfo_reused"] = resolver.stats["nfo_reused"]
         elapsed = time.monotonic() - started
         LOG.info(
-            "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d jacred_hits=%d jacred_misses=%d torrserver_ffprobe=%d nfo_reused=%d outputs=%s elapsed=%.2fs",
+            "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d nfo_reused=%d outputs=%s elapsed=%.2fs",
             len(snapshot_map), len(quality_ready), unresolved, totals["created"], totals["updated"], totals["unchanged"], totals["failed"],
-            self.stats["jacred_hits"], self.stats["jacred_misses"], self.stats["torrserver_ffprobe"], self.stats["nfo_reused"], enabled_names, elapsed,
+            resolver.stats["nfo_reused"], enabled_names, elapsed,
         )
         return 0
 
@@ -3005,7 +2599,6 @@ def load_config(path: Path) -> dict[str, Any]:
     ts = raw.get("torrserver", {})
     outputs = raw.get("outputs", {})
     sync = raw.get("sync", {})
-    jacred_cfg = raw.get("jacred", {})
     logging_cfg = raw.get("logging", {})
     url = str(ts.get("url", "")).strip().rstrip("/")
     if not url:
@@ -3047,20 +2640,6 @@ def load_config(path: Path) -> dict[str, Any]:
             "max_torrent_removals_per_run": max_removals if name == "jellyfin" else 0,
         }
 
-    jacred_url = str(jacred_cfg.get("url", "")).strip().rstrip("/")
-    if jacred_url and not jacred_url.startswith(("http://", "https://")):
-        raise ValueError("[jacred].url must start with http:// or https://")
-    jacred_indexer_id = int(jacred_cfg.get("indexer_id", 0))
-    jacred_limit = int(jacred_cfg.get("limit", 1000))
-    if jacred_limit < 1 or jacred_limit > 1000:
-        raise ValueError("[jacred].limit must be between 1 and 1000")
-    jacred_timeout = float(jacred_cfg.get("timeout_sec", 30))
-    jacred_retries = int(jacred_cfg.get("retries", 0))
-    if jacred_timeout <= 0:
-        raise ValueError("[jacred].timeout_sec must be > 0")
-    if jacred_retries < 0:
-        raise ValueError("[jacred].retries must be >= 0")
-
     return {
         "torrserver": {
             "url": url,
@@ -3073,14 +2652,6 @@ def load_config(path: Path) -> dict[str, Any]:
         "sync": {
             "tv_unmatched_season": int(sync.get("tv_unmatched_season", 0)),
             "video_extensions": normalized_extensions,
-        },
-        "jacred": {
-            "url": jacred_url,
-            "api_key": str(jacred_cfg.get("api_key", "")).strip(),
-            "indexer_id": jacred_indexer_id,
-            "limit": jacred_limit,
-            "timeout_sec": jacred_timeout,
-            "retries": jacred_retries,
         },
         "logging": {"level": str(logging_cfg.get("level", "INFO")).upper()},
     }
@@ -3095,40 +2666,16 @@ def main() -> int:
     parser.add_argument("--config", default="/etc/torr2strm/config.toml")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--version", action="version", version=VERSION)
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--jacred", metavar="URL", help="override configured JacRed base URL for this run")
-    group.add_argument("--no-jacred", action="store_true", help="disable JacRed for this run")
-    parser.add_argument("--jacred-api-key", metavar="KEY", help="override configured JacRed API key")
-    parser.add_argument("--jacred-indexer-id", type=int, help="deprecated legacy option; ignored by direct public JacRed v2 JSON API")
-    parser.add_argument("--jacred-limit", type=int, help="override JacRed result limit")
     try:
         args = parser.parse_args()
         cfg = load_config(Path(args.config))
-        if args.jacred is not None:
-            cfg["jacred"]["url"] = args.jacred.rstrip("/")
-        if args.no_jacred:
-            cfg["jacred"]["url"] = ""
-        if args.jacred_api_key is not None:
-            cfg["jacred"]["api_key"] = args.jacred_api_key
-        if args.jacred_indexer_id is not None:
-            cfg["jacred"]["indexer_id"] = args.jacred_indexer_id
-        if args.jacred_limit is not None:
-            if not 1 <= args.jacred_limit <= 1000:
-                raise ValueError("--jacred-limit must be between 1 and 1000")
-            cfg["jacred"]["limit"] = args.jacred_limit
-
         setup_logging(cfg["logging"]["level"])
         client = TorrServerClient(
             cfg["torrserver"]["url"],
             cfg["torrserver"]["timeout_sec"],
             cfg["torrserver"]["remove_timeout_sec"],
         )
-        jacred = JacRedClient(cfg["jacred"])
-        if jacred.enabled:
-            LOG.info("JACRED_ENABLED url=%s limit=%s", jacred.base_url, jacred.limit)
-        else:
-            LOG.info("JACRED_DISABLED")
-        return SyncCoordinator(cfg, client, jacred, dry_run=args.dry_run).run()
+        return SyncCoordinator(cfg, client, dry_run=args.dry_run).run()
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
