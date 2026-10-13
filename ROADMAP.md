@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Shipped baseline: v1.4.6. Next target: v1.4.7 (pre-release).** Phase 8 implements two changes: (1) use a clear `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged. The formal v1.4.7 tag is withheld pending automated and mini-PC acceptance tests.
+> **v1.4.7 candidate: implementation and CI complete; mini-PC acceptance pending.** GitHub Actions passed all 33 tests. Phase 8 changes: (1) use a clear `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged. The formal v1.4.7 tag is withheld until mini-PC acceptance passes.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -250,7 +250,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 
 ### Phase 8 — Apply the new quality-root fallback and Kodi TV NFO policy
 
-**Status: implementation prepared for v1.4.7; automated CI and mini-PC acceptance are release gates.**
+**Status: implementation prepared for v1.4.7; GitHub Actions CI passed (33 tests); mini-PC acceptance remains a release gate.**
 
 **Work**
 
@@ -296,7 +296,8 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 5 — Manifest reconciliation and clean-rebuild path implemented
 - [x] Phase 6 — Regression tests passed in GitHub Actions and on the mini-PC (32 tests)
 - [x] Phase 7a — Real-player validation on the mini-PC: Windows/SMB paths and Kodi playback verified
-- [ ] Phase 7b — Create the `v1.4.6` release tag and publish the GitHub Release
-- [ ] Phase 8 — Implement and validate the 4K title-marker fallback and Kodi TV root-only NFO policy for v1.4.7
+- [x] Phase 8a — Implement the 4K title-marker fallback and Kodi TV root-only NFO policy; GitHub Actions passed (33 tests)
+- [ ] Phase 8b — Clean rebuild and mini-PC acceptance: Kodi internet scraping, Elementum playback, and shared-series reconciliation
+- [ ] Phase 8c — Publish the formal `v1.4.7` release tag after Phase 8b passes
 
-The v1.4.6 implementation is the validated baseline. The v1.4.7 pre-release code is prepared on a separate branch; merge/tag only after GitHub Actions and the mini-PC acceptance checks pass.
+The v1.4.6 implementation remains the validated baseline. Merge the v1.4.7 candidate to `main` for controlled installation/testing; do not publish the formal release tag until the mini-PC acceptance checks pass.
