@@ -271,7 +271,6 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Removing or updating one torrent never removes a shared `tvshow.nfo` still needed by another release.
 - Regression tests and real Kodi scraper/playback checks pass on the mini-PC.
 
-
 ### Phase 9 — Correct quality-root evidence precedence
 
 **Status: agreed follow-up for the next implementation version; not included in v1.4.7.**
