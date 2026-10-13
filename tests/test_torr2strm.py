@@ -21,6 +21,7 @@ from torr2strm import (
     quality_label_from_metadata,
     quality_root_from_label,
     quality_root_from_probe_payload,
+    quality_root_from_probe_or_title,
     parse_snapshot,
     usable_ffprobe,
     atomic_write_text,
@@ -259,7 +260,10 @@ def test_kodi_windows_safe_paths_preserve_extensions_and_do_not_change_jellyfin_
         assert len(kodi_strms) == 2
         for strm in kodi_strms:
             assert strm.suffix == ".strm"
-            assert strm.with_suffix(".nfo").is_file()
+            if strm.relative_to(kr).parts[0] == "tv":
+                assert not strm.with_suffix(".nfo").exists()
+            else:
+                assert strm.with_suffix(".nfo").is_file()
             for component in strm.relative_to(kr).parts:
                 for invalid in '<>:"|?*':
                     assert invalid not in component
@@ -446,7 +450,7 @@ def test_manifest_v5_exists_in_both_outputs():
             assert manifest["root"] == str(root)
 
 
-def test_missing_ffprobe_defaults_root_to_1080p_even_when_title_says_4k():
+def test_missing_ffprobe_uses_explicit_4k_title_as_root_fallback():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr = base / "jelly"
@@ -456,8 +460,8 @@ def test_missing_ffprobe_defaults_root_to_1080p_even_when_title_says_4k():
         client = FakeClient([t], probes={})
         c = cfg(jr, kr)
         assert run(c, client) == 0
-        assert list((jr / "movie" / "1080p").rglob("*.strm"))
-        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
+        assert list((jr / "movie" / "4K").rglob("*.strm"))
+        kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
         assert "2160p HDR" in kodi_strm.name
         assert "[88888888]" in kodi_strm.name
         assert client.ffprobe_calls == []
@@ -625,6 +629,7 @@ def test_kodi_unknown_series_preserves_source_hierarchy_and_does_not_invent_epis
         assert "S01E" not in strm.name
         assert "720p [33333333]" in strm.name
         assert not list((kr / "tv" / "1080p").rglob("tvshow.nfo"))
+        assert not list((kr / "tv" / "1080p" / "Mystery.Release.S01.720p").rglob("*.nfo"))
 
 
 def test_kodi_shared_series_directory_cleanup_preserves_other_release():
@@ -649,7 +654,7 @@ def test_kodi_shared_series_directory_cleanup_preserves_other_release():
         assert (kr / "tv" / "1080p" / "Shared Show (2020)" / "tvshow.nfo").is_file()
 
 
-def test_structured_quality_and_title_never_select_4k_root_without_ffprobe():
+def test_explicit_4k_title_fallback_can_select_root_even_when_label_is_structured():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr, kr = base / "jelly", base / "kodi"
@@ -657,11 +662,27 @@ def test_structured_quality_and_title_never_select_4k_root_without_ffprobe():
         t = torrent(h=h, title="Film.2160p.HDR", category="movie", data={"quality": "720p"})
         client = FakeClient([t], probes={})
         assert run(cfg(jr, kr), client) == 0
-        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
+        kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
         assert "720p" in kodi_strm.name
         assert "2160p" not in kodi_strm.name
         assert client.ffprobe_calls == []
         assert "HDR" not in kodi_strm.name
+
+
+def test_usable_non_4k_ffprobe_dimensions_override_4k_title_marker():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "d" * 40
+        t = torrent(h=h, title="Film.2160p.HDR", category="movie")
+        p = probe(1920, 1080)
+        attach_existing_probe(t, p)
+        client = FakeClient([t], probes={(h, 1): p})
+        assert run(cfg(jr, kr), client) == 0
+        assert list((jr / "movie" / "1080p").rglob("*.strm"))
+        assert list((kr / "movie" / "1080p").rglob("*.strm"))
+        assert not list((kr / "movie" / "4K").rglob("*.strm"))
+        assert client.ffprobe_calls == []
 
 
 def test_unknown_quality_uses_1080p_root_without_quality_suffix():
@@ -692,16 +713,14 @@ def test_no_episode_ffprobe_calls_without_existing_per_file_probe_data():
         client = FakeClient([t], probes={(h, 1): primary, (h, 2): secondary})
         assert run(cfg(jr, kr), client) == 0
         assert client.ffprobe_calls == []
-        kodi_files = {p.name: p for p in (kr / "tv" / "4K" / "Season Pack" / "Season 01").rglob("*.nfo")}
-        assert len(kodi_files) == 2
-        first = next(path for name, path in kodi_files.items() if "S01E01" in name)
-        first_text = first.read_text(encoding="utf-8")
-        assert "<width>3840</width>" in first_text
-        second = next(path for name, path in kodi_files.items() if "S01E02" in name)
-        second_text = second.read_text(encoding="utf-8")
-        assert "<fileinfo>" not in second_text
-        assert_no_display_title_fields(first_text)
-        assert_no_display_title_fields(second_text)
+        season_dir = kr / "tv" / "4K" / "Season Pack" / "Season 01"
+        assert len(list(season_dir.rglob("*.strm"))) == 2
+        assert not list(season_dir.rglob("*.nfo"))
+        tvshow_nfo = kr / "tv" / "4K" / "Season Pack" / "tvshow.nfo"
+        assert tvshow_nfo.is_file()
+        tvshow_text = tvshow_nfo.read_text(encoding="utf-8")
+        assert "<width>3840</width>" in tvshow_text
+        assert_no_display_title_fields(tvshow_text)
 
 
 def test_known_series_files_without_episode_coordinates_do_not_get_duplicate_file_suffix():
@@ -810,12 +829,18 @@ def test_kodi_short_hash_is_extended_only_when_first_eight_characters_collide():
         assert any("[12345678b]" in name for name in names)
 
 
-def test_quality_root_uses_only_embedded_torrserver_ffprobe():
+def test_quality_root_uses_usable_dimensions_before_explicit_title_fallback():
     assert quality_root_from_probe_payload(None) == "1080p"
     assert quality_root_from_probe_payload({"quality": "2160p"}) == "1080p"
     assert quality_root_from_probe_payload(probe(1920, 1080)) == "1080p"
     assert quality_root_from_probe_payload(probe(2560, 1440)) == "1080p"
     assert quality_root_from_probe_payload(probe(3840, 2160, hdr="dv")) == "4K"
+    assert quality_root_from_probe_or_title(None, "Film 2160p HDR") == "4K"
+    assert quality_root_from_probe_or_title(None, "Film 4K UHD") == "4K"
+    assert quality_root_from_probe_or_title(None, "Film UHD") == "1080p"
+    assert quality_root_from_probe_or_title(None, "Film 1440p") == "1080p"
+    assert quality_root_from_probe_or_title(probe(1920, 1080), "Film 2160p") == "1080p"
+    assert quality_root_from_probe_or_title(probe(3840, 2160), "Film 1080p") == "4K"
 
 
 def test_torr2strm_does_not_request_ffprobe_from_torrserver():
