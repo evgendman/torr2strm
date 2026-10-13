@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.7 (pre-release; mini-PC acceptance pending)
+
+- Use usable video dimensions already embedded in TorrServer metadata as the first choice for the quality root. When such dimensions are unavailable, an explicit `4K` or `2160p` marker in the release title may select the `4K` root; usable non-4K dimensions always override title markers.
+- In Kodi TV output, stop creating per-episode NFO sidecars. Create `tvshow.nfo` only at the root of an identified series and keep it until no managed release references it.
+- Preserve Kodi movie NFOs, Jellyfin paths and NFO behavior, NFO format v3, manifest format v5, and the no-network/no-new-ffprobe policy.
+
+
 ## 1.4.6
 
 - Sanitize Kodi-only directory, item, and torrent-internal path components for Windows/SMB clients, avoiding Samba short-name aliases for names containing characters such as `|`.

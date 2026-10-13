@@ -1,4 +1,4 @@
-# torr2strm v1.4.6
+# torr2strm v1.4.7
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -62,7 +62,7 @@ Manifest state is never copied between roots.
 
 Category is taken only from the category field already present in TorrServer. Supported movie and tv values are preserved. Missing, blank, or unsupported values—including anime—go to _uncategorized. Category is never guessed from title, filename, or external lookup.
 
-The two quality roots are 4K and 1080p. 4K is used only when usable ffprobe data already embedded in TorrServer torrent metadata reports a video dimension of at least 3840 pixels. If ffprobe is absent or does not prove 4K, the root is 1080p. Structured quality fields and title markers already stored in TorrServer data may supply a visible basename label, but never promote a torrent into 4K. Cached NFOs may preserve technical stream details for the exact source file, but do not determine category, root, or display label.
+The two quality roots are `4K` and `1080p`. Usable video dimensions already embedded in TorrServer metadata take priority: a maximum dimension of at least 3840 pixels selects `4K`, while lower usable dimensions select `1080p`. Only when usable dimensions are unavailable may a clear `4K` or `2160p` marker in the release title select the `4K` root. Title markers never override usable non-4K dimensions. Structured quality fields do not select the root. Cached NFOs may preserve stream details for an exact source file, but do not determine category, root, or display label.
 
 torr2strm does not call JacRed, Prowlarr, /ffp/, or any other metadata/probing service. It does not run local ffprobe. A 1080p root does not claim every release in it is actually 1080p.
 
@@ -80,9 +80,9 @@ NFOs contain only reliable identifiers and technical stream data. They deliberat
 
 - **Movie sidecar NFO:** trusted provider IDs, stream details only when already available in a matching release ffprobe payload or cached NFO, and a Kodi Combination NFO scraper URL when a trustworthy TMDb ID is available.
 - **Series-root `tvshow.nfo`:** trusted series IDs, a Combination NFO scraper URL when a trustworthy TMDb ID is available, and `fileinfo/streamdetails` from a deterministic representative release only when those details were already available. No display title is written.
-- **Episode sidecar NFO:** ordinary `episodedetails` format, trusted IDs and known season/episode coordinates; include stream details only from an already-available matching source or cached NFO. No Combination NFO URL.
-- **No NFO type writes** `title`, `originaltitle`, `sorttitle`, `showtitle`, `name`, year/date display metadata, or any other human-facing title field.
-- Any pre-existing per-file ffprobe details remain tied to their own STRM/NFO. torr2strm does not run additional per-file probes; where data is unavailable, the NFO remains identity-only.
+- **Kodi TV episode sidecars are not generated.** This leaves episode STRMs eligible for Kodi's internet scraper rather than pinning metadata through local `episodedetails` NFOs. A `tvshow.nfo` is generated only in the root of an identified series; no NFO is emitted in season folders.
+- **Jellyfin episode NFO behavior is unchanged.** Jellyfin continues to receive its existing per-file NFO output, including season/episode coordinates and technical details when already available.
+- **No generated NFO writes** `title`, `originaltitle`, `sorttitle`, `showtitle`, `name`, year/date display metadata, or any other human-facing title field. Kodi movie NFOs continue to use trusted IDs and available streamdetails plus a Combination URL when a trustworthy TMDb ID exists.
 
 Useful video/audio/subtitle stream fields include codec, bitrate, dimensions, aspect ratio, frame rate, scan type, bit depth, HDR type, stereomode, audio language/channels/sampling rate, and subtitle codec/language/title flags when available.
 
@@ -90,9 +90,9 @@ A valid reusable NFO may be copied between output trees for the same source file
 
 ### NFO format and clean rebuild
 
-NFO format version is independent from the software and manifest versions. Version 3 uses the `<torr2strm formatversion="3" />` marker, title-free metadata, and the Combination NFO URL after the XML root for movie and `tvshow.nfo` files where a TMDb ID is known. Episode NFOs remain ordinary XML without a trailing scraper URL.
+NFO format version 3 remains independent from software and manifest versions. Kodi movie NFOs and series-root `tvshow.nfo` files use the `<torr2strm formatversion="3" />` marker and a Combination NFO URL after the XML root when a trustworthy TMDb ID is known. Kodi TV episode sidecar NFOs are not generated; Jellyfin's existing episode NFOs remain ordinary XML.
 
-The output trees are still under development and are intentionally rebuilt cleanly for v1.4.0; no directory-tree migration is performed. The parser still strips title fields if it upgrades an older cached NFO, but operators should follow the clean-reset procedure below instead of relying on legacy NFOs.
+The v1.4.7 tree-layout/NFO policy change is deployed with a clean rebuild rather than a directory-tree migration. Stop the service/timer and clear only the two configured output-root contents (including each `.torr2strm` manifest and root marker) before the first real sync. Keep `/etc/torr2strm/config.toml`; do not clear TorrServer data or any media/cache directories outside the configured output roots.
 
 ## Reverse deletion
 
@@ -131,8 +131,8 @@ Main sections:
 - `[torrserver]`: TorrServer base URL and API/metadata timeouts.
 - `[outputs.jellyfin]` and `[outputs.kodi]`: output roots, independent manifests and enable flags. Only Jellyfin can enable reverse deletion.
 - `[sync]`: eligible video extensions and the fallback season for TV files whose season cannot be inferred.
-- Legacy `[quality]` timeout/retry settings and old `[jacred]` sections are ignored in v1.4.5; they may be removed from the config file.
-- No external indexer/provider configuration exists in v1.4.5. Older `[jacred]` sections are ignored and may be removed from `/etc/torr2strm/config.toml`.
+- Legacy `[quality]` timeout/retry settings and old `[jacred]` sections are ignored in v1.4.7; they may be removed from the config file.
+- No external indexer/provider configuration exists in v1.4.7. Older `[jacred]` sections are ignored and may be removed from `/etc/torr2strm/config.toml`.
 - `[logging]`: log verbosity.
 
 Command-line parameters (there are no external-source override flags):
@@ -154,10 +154,10 @@ sudo /usr/bin/python3 /opt/torr2strm/torr2strm.py --config /etc/torr2strm/config
 
 The service is a systemd oneshot triggered by `torr2strm.timer`.
 
-Recoverable media-information failures no longer prevent the STRM from being materialized if quality can be determined from structured metadata/title, or defaulted to the `1080p` root. An identity-only NFO is written if per-file ffprobe data is unavailable. Fatal configuration/source errors still exit non-zero.
+Recoverable media-information failures no longer prevent STRMs from being materialized. Quality uses available embedded dimensions first, then the explicit `4K`/`2160p` title fallback only when dimensions are unavailable, and otherwise defaults to `1080p`. When technical details are unavailable, Jellyfin and Kodi movie NFOs may be identity-only; Kodi TV episode sidecars are not created. Fatal configuration/source errors still exit non-zero.
 
 ## Upgrade and deployment
 
-Software version: v1.4.6; manifest format v5; NFO format v3. PR #8 is merged to main. GitHub Actions CI passed (32 tests), and the mini-PC synchronization, Windows/SMB directory listing, `.strm`/`.nfo` extensions, and Kodi playback were verified. File counts remained unchanged: Jellyfin 655 STRM/685 NFO; Kodi 553 STRM/561 NFO. The formal `v1.4.6` release tag has not yet been published.
+Software version: v1.4.7 candidate; manifest format v5; NFO format v3. GitHub Actions passed all 33 tests. Mini-PC acceptance—clean rebuild, Kodi scraper discovery, Elementum playback, and shared-series reconciliation—remains pending before publishing a formal `v1.4.7` release tag.
 
-For an in-place upgrade, stop/disable the timer, back up the application script and configuration file, then run the repository installer. Preserve both configured media roots and their .torr2strm state. Do not clear or recreate either output tree as part of this upgrade. The installer leaves an already-disabled timer disabled; perform a manual --dry-run first and review the logs before any real sync.
+For v1.4.7, back up `/opt/torr2strm/torr2strm.py` and `/etc/torr2strm/config.toml`, stop the timer/service, and clean the contents of the configured Jellyfin and Kodi output roots because their NFO/tree policies are changing. Keep the config and the TorrServer source inventory. Run `install.sh`, verify the installed version, perform a manual dry-run and inspect the log before the first real synchronization. Start the timer only after Kodi scraping and Elementum playback have been checked.

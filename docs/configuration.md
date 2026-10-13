@@ -3,7 +3,7 @@
 Production file: `/etc/torr2strm/config.toml`.
 Example shipped with the repository: [`etc/config.toml.example`](../etc/config.toml.example).
 
-`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.6 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
+`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.7 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
 
 ## Complete parameter map
 
@@ -41,13 +41,15 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 ### Quality decision rules
 
 - Category comes only from the category field already present in TorrServer. Missing, blank, or unsupported values remain _uncategorized.
-- The 4K root is selected only when usable ffprobe stream data already embedded in TorrServer metadata proves a video dimension of at least 3840 pixels.
-- If that payload is missing, invalid, or does not prove 4K, the root is 1080p.
-- Structured quality fields and explicit markers in the TorrServer title may supply a visible filename label, but never select the 4K root.
+- Usable ffprobe video dimensions already embedded in TorrServer metadata take priority: a maximum dimension of at least 3840 selects `4K`; lower dimensions select `1080p`.
+- Only when usable dimensions are missing, invalid, or absent may an explicit `4K` or `2160p` marker in the TorrServer title select the `4K` root. Usable lower-resolution dimensions always override title markers.
+- Structured quality fields influence the visible basename label but do not independently select the root.
 - Cached NFOs may be reused for exact-file streamdetails only; they do not affect category, root, or display label.
-- No local ffprobe is run and TorrServer /ffp/ is never called. No JacRed, Prowlarr, or other external-source requests are made.
+- No local ffprobe is run, TorrServer `/ffp/` is never called, and no JacRed, Prowlarr, or other external-source requests are made.
 
-Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.6 and can be removed.
+For Kodi TV, an identified series receives one root-level `tvshow.nfo`; season folders and episode STRMs do not get NFO sidecars. Jellyfin's existing per-item NFO output and Kodi movie NFO behavior are unchanged.
+
+Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.7 and can be removed.
 
 ### `[logging]`
 

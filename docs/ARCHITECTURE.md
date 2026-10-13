@@ -11,7 +11,7 @@ category only from TorrServer category field (unknown → _uncategorized)
         ↓
 read ffprobe / structured metadata / title already present in TorrServer data
         ↓
-if TorrServer ffprobe proves 4K → quality_root=4K; else quality_root=1080p
+if usable embedded video dimensions exist, classify from dimensions; otherwise a clear 4K/2160p title marker may select 4K
         ↓
 reuse exact-file NFO streamdetails where available; never probe
         ↓
@@ -24,11 +24,13 @@ Jellyfin output (existing paths) + normalized Kodi output
 
 Category comes only from TorrServer's top-level category field. Supported movie/tv values are used; a blank or unsupported category remains _uncategorized. No title-based inference, provider lookup, or enrichment can change it.
 
-Only usable ffprobe stream data already embedded in TorrServer metadata can select the quality root:
-- 4K when the maximum video dimension is at least 3840 pixels.
-- 1080p when ffprobe is missing, invalid, or does not prove 4K.
+Usable video dimensions already embedded in TorrServer metadata have priority:
+- A maximum video dimension of at least 3840 pixels selects `4K`.
+- Usable lower dimensions select `1080p`, even if the title contains a 4K marker.
+- Only if usable dimensions are missing, invalid, or absent from the payload, a clear standalone `4K` or `2160p` token in the TorrServer release title may select `4K`.
+- Without either usable dimensions or those explicit title markers, the root defaults to `1080p`.
 
-Structured quality fields and explicit release-title markers already in TorrServer data may contribute to the visible basename label, but cannot select the 4K root. Cached NFOs may preserve exact-file fileinfo/streamdetails for output only; they cannot determine category, root, or display label. The importer never calls JacRed, Prowlarr, other external sources, TorrServer /ffp/, or local ffprobe.
+Structured quality fields affect the display label but do not independently select the root. Cached NFOs preserve exact-file streamdetails only; they cannot determine category, root, or display label. The importer never calls JacRed, Prowlarr, other external sources, TorrServer `/ffp/`, or local ffprobe.
 
 Display-label priority:
 1. ffprobe JSON already included in TorrServer metadata.
@@ -69,7 +71,7 @@ Playback semantics do not change:
 
 ## Manifest and shared-folder reconciliation
 
-Each output has its own root marker and manifest. The manifest is the source of truth mapping each STRM/NFO to full torrent hash, source file path/id/order, and output-relative paths. Filenames and short hashes are display aids, never deletion identities.
+Each output has its own root marker and manifest. The manifest is the source of truth mapping each STRM/NFO to full torrent hash, source file path/id/order, and output-relative paths. Kodi's shared `tvshow.nfo` is referenced separately by each release record using that series root, so it is removed only after the last reference disappears. Filenames and short hashes are display aids, never deletion identities.
 
 Kodi series/season directories may be shared by several torrents. The synchronizer reconciles each torrent's entries independently; it removes only old managed files no longer referenced by any new record and prunes directories only when empty. Removing one torrent cannot delete another release's STRM or a still-used tvshow.nfo. Source torrents disappearing from TorrServer are reflected in all enabled outputs on the next sync.
 
@@ -77,12 +79,12 @@ Kodi series/season directories may be shared by several torrents. The synchroniz
 
 No human-readable display title/name fields are written to any NFO. This is intentional: Kodi was observed to replace its scraper-localized title with NFO title values after scraping; Jellyfin should obtain localized names by provider ID.
 
-- Movie NFO: trusted IDs, per-file ffprobe stream details, and a Combination NFO scraper URL when a trustworthy TMDb ID is available.
-- `tvshow.nfo`: trusted series IDs, Combination NFO URL, and streamdetails copied from the deterministic representative release for that quality root; no title. Each episode sidecar NFO retains its own exact source-file streamdetails.
-- Episode NFO: ordinary episode NFO, trusted IDs, known season/episode coordinates, and stream details from that exact source file; no Combination URL.
-- If technical ffprobe data is not already present in the exact release payload or a valid cached NFO, the synchronizer still creates the STRM and an identity-only NFO. It never contacts TorrServer `/ffp/` and does not perform local probing.
+- Kodi movie NFO: trusted IDs, streamdetails already available for the represented movie, and a Combination NFO URL when a trustworthy TMDb ID is available.
+- Kodi TV: one `tvshow.nfo` at the root of each identified series directory per quality root, with trusted series IDs and a Combination NFO URL when a trustworthy TMDb ID is available. Streamdetails may be copied from the deterministic representative release only when already available.
+- Kodi TV does not create NFO sidecars beside episodes or in season folders; the internet scraper is responsible for per-episode metadata. Unknown series identities do not receive a speculative `tvshow.nfo`.
+- Jellyfin's existing per-item NFO generation is unchanged. No new ffprobe calls are made; missing technical details do not prevent STRM generation.
 
-NFO format is v3. It is distinct from software/manifest versions. Current development trees are cleaned and rebuilt; no physical directory-tree migration is performed. If an older NFO is encountered through manifest-based cache reuse, title-like fields are removed during format upgrade.
+NFO format is v3. It is distinct from software/manifest versions; the Kodi TV sidecar-policy change does not alter the serialized format of the NFOs that remain. Current development trees are cleaned and rebuilt; no physical directory-tree migration is performed. If an older NFO is encountered through manifest-based cache reuse, title-like fields are removed during format upgrade.
 
 ## Rebuild and safety
 
