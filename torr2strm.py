@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.5 - TorrServer-only STRM/NFO materialization.
+"""torr2strm 1.4.7 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
 - No external indexer or metadata source is queried.
 - Missing or unsupported TorrServer category maps to _uncategorized; category is never guessed.
-- A torrent goes into 4K only when an already-present ffprobe payload in TorrServer data proves 4K dimensions; otherwise it goes into 1080p.
+- Usable ffprobe video dimensions take priority for the quality root; only when dimensions are unavailable can an explicit 4K/2160p release-title marker select the 4K root.
 - Jellyfin keeps its existing output layout; Kodi/Elementum keeps its normalized movie/TV tree and playback semantics.
 - Cached NFOs may be reused for exact-file streamdetails, but never determine category, quality root, or display quality label.
 - Only Jellyfin output may reverse-delete a TorrServer torrent, using action=rem only; never action=drop.
@@ -35,7 +35,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.6"
+VERSION = "1.4.7"
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
@@ -449,10 +449,46 @@ def quality_root_from_label(label: str | None) -> str:
     return "4K" if match else "1080p"
 
 
+def quality_dimensions_from_probe_payload(payload: Any) -> tuple[int, int] | None:
+    """Return the first usable embedded video dimensions without probing media."""
+    if isinstance(payload, list):
+        streams = payload
+    elif isinstance(payload, dict):
+        streams = payload.get("streams")
+    else:
+        return None
+    if not isinstance(streams, list):
+        return None
+    for stream in streams:
+        if not isinstance(stream, dict) or str(stream.get("codec_type", "")).lower() != "video":
+            continue
+        try:
+            width = int(stream.get("width") or 0)
+            height = int(stream.get("height") or 0)
+        except (TypeError, ValueError):
+            continue
+        if width > 0 and height > 0:
+            return width, height
+    return None
+
+
 def quality_root_from_probe_payload(payload: Any) -> str:
-    """Select 4K only from usable ffprobe embedded in TorrServer metadata."""
-    label = quality_label_from_probe(payload)
-    return "4K" if label is not None and quality_root_from_label(label) == "4K" else "1080p"
+    """Select a quality root from usable dimensions already embedded in TorrServer."""
+    dimensions = quality_dimensions_from_probe_payload(payload)
+    if dimensions is None:
+        return "1080p"
+    return quality_from_dimensions(*dimensions)
+
+
+def quality_root_from_probe_or_title(payload: Any, title: Any) -> str:
+    """Prefer usable technical dimensions; use an explicit 4K title marker only as fallback."""
+    dimensions = quality_dimensions_from_probe_payload(payload)
+    if dimensions is not None:
+        return quality_from_dimensions(*dimensions)
+    release_title = html.unescape(str(title or "")).lower()
+    if re.search(r"(?<![a-z0-9])(?:4k|2160p)(?![a-z0-9])", release_title):
+        return "4K"
+    return "1080p"
 
 
 def quality_marker(label: str | None) -> str:
@@ -1476,14 +1512,21 @@ class MediaInfoResolver:
         if title_label:
             evidence.append(("release_title", title_label))
 
-        # Only valid ffprobe already embedded in TorrServer data can select 4K.
-        # Missing/invalid/non-4K probe data always selects the 1080p root.
+        # Usable embedded video dimensions are authoritative. Only when dimensions
+        # cannot be read may an explicit 4K/2160p title marker select the 4K root.
         quality_label = evidence[0][1] if evidence else None
-        quality_root = quality_root_from_probe_payload(snapshot_payload)
+        dimensions_available = quality_dimensions_from_probe_payload(snapshot_payload) is not None
+        quality_root = quality_root_from_probe_or_title(snapshot_payload, torrent.title)
+        root_source = (
+            "torrserver_ffprobe_dimensions"
+            if dimensions_available
+            else "release_title_fallback"
+            if quality_root == "4K"
+            else "default_1080p"
+        )
         LOG.info(
             "QUALITY_ROOT hash=%s result=%s via=%s",
-            torrent.hash, quality_root,
-            "torrserver_ffprobe" if snapshot_payload is not None else "ffprobe_unavailable",
+            torrent.hash, quality_root, root_source,
         )
 
         # Only ffprobe already present in TorrServer metadata may supply
@@ -2078,23 +2121,29 @@ class OutputRunner:
             else:
                 nfo_content = self._nfo_content(snap, file, None, source)
 
+            # Keep per-file NFO content in memory so the deterministic representative
+            # can supply technical streamdetails to tvshow.nfo, but do not emit an
+            # episode-level NFO sidecar in Kodi TV output.
             nfo_contents_by_file_id[file.file_id] = nfo_content
-            self._write_nfo(nfo_path, nfo_content, snap.hash, file.path, rel_nfo)
+            if snap.category != "tv":
+                self._write_nfo(nfo_path, nfo_content, snap.hash, file.path, rel_nfo)
             self._write_strm(strm_path, url, snap.hash, file.path, rel_strm)
-            desired[rel_strm] = {
+            item_record = {
                 "source_path": file.path,
                 "file_id": file.file_id,
                 "file_order": file.order,
                 "length": file.length,
                 "url": url,
                 "content_sha256": sha256_text(url + "\n"),
-                "nfo": rel_nfo,
-                "nfo_sha256": sha256_text(nfo_content),
                 "media_info_source": source,
                 "quality_root": snap.quality,
                 "quality_label": snap.quality_label,
                 "logical_identity": identity,
             }
+            if snap.category != "tv":
+                item_record["nfo"] = rel_nfo
+                item_record["nfo_sha256"] = sha256_text(nfo_content)
+            desired[rel_strm] = item_record
 
         tvshow_nfo_rel: str | None = None
         if normalized_tv:
