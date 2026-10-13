@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **Shipped baseline: v1.4.6 is merged to `main` and validated on the mini-PC.** GitHub Actions passed (32 tests); the validated tree counts were Jellyfin (655 STRM/685 NFO) and Kodi (553 STRM/561 NFO), with Windows/SMB paths and Kodi playback verified. The formal `v1.4.6` release tag is pending. **New follow-up decisions, not yet implemented:** (1) use an explicit `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable technical video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged.
+> **Shipped baseline: v1.4.6. Next target: v1.4.7 (pre-release).** Phase 8 implements two changes: (1) use a clear `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged. The formal v1.4.7 tag is withheld pending automated and mini-PC acceptance tests.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -31,7 +31,7 @@ Keep Jellyfin's existing output-tree construction, grouping, and NFO behavior in
 - Categories, quality roots, magnets, and IDs use only data already present in TorrServer; no external enrichment is performed.
 - torr2strm does not execute local ffprobe and never calls TorrServer `/ffp/{hash}/{file_id}`. It reads ffprobe data already present in TorrServer metadata and may reuse cached NFO streamdetails for NFO output only.
 - If technical stream details are not already available for an item, its NFO is identity-only. No new media probe is requested to populate it.
-- Quality root has exactly two values, `4K` and `1080p`. Only ffprobe embedded in TorrServer metadata can select `4K`; missing, invalid, or non-4K probe data means `1080p`.
+- Quality root has exactly two values, `4K` and `1080p`. Usable video dimensions embedded in TorrServer metadata take priority; when dimensions are unavailable, an explicit `4K`/`2160p` release-title marker may select `4K`. Otherwise the root is `1080p`.
 - Kodi has been observed to replace scraped display titles with titles from NFO late in its processing. Jellyfin reads ffprobe information present in NFO but does not use it as the effective stream metadata. Therefore the target NFO contract deliberately excludes human-readable name/title fields from both outputs.
 
 ## 3. Agreed target invariants
@@ -62,7 +62,7 @@ These decisions are settled and should not be reopened during implementation unl
 14. **Unknown series identity:** use the torrent release title as the torrent-level directory name and preserve that torrent's original internal file hierarchy. Do not merge unknown series based on title similarity and do not invent IDs. Add a short torrent hash to the fallback directory name only if it is necessary to resolve an actual path collision.
 15. For identified movies, group releases by trusted movie identity under a readable `<Movie Name> (<Year, if known>)/` directory in the relevant Kodi quality root. If the movie identity is unknown, use the torrent title and preserve the source torrent's internal hierarchy rather than guessing that separate torrents are the same movie.
 16. Keep the existing Kodi playback model: one torrent-level STRM per movie release, no `oindex`; one STRM per playable TV file, with Elementum `oindex` equal to that file's original zero-based FileStats order. Never substitute the sorted path index or TorrServer `/play` file ID.
-17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; the matching NFO uses the same basename. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm`. If quality is unknown, omit the `— <quality>` portion. All Kodi path components, including torrent-internal folders for unidentified items, must be Windows/SMB-safe while preserving `.strm`/`.nfo` extensions; Jellyfin's path builder must remain unchanged.
+17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; Kodi TV episodes do not get matching item-level NFO sidecars. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm` with a matching movie NFO. If quality is unknown, omit the `— <quality>` portion. All Kodi path components, including torrent-internal folders for unidentified items, must be Windows/SMB-safe while preserving `.strm`/`.nfo` extensions; Jellyfin's path builder must remain unchanged.
 18. Use the approved short-hash convention already documented for the tree. Start with 8 characters and increase the length only if short hashes collide at the same output path. Do not lengthen non-conflicting hashes.
 19. If two files in one torrent resolve to the same logical episode and would otherwise have the same destination name, append a source-file ordinal from the original FileStats list (displayed starting at 1) only to the colliding items. This suffix is not added to normal episodes.
 20. Do not fabricate episode or season numbers. If the series identity is known and an episode number can be parsed, use it. If an episode number is unknown, preserve a human-readable source filename rather than inventing `SxxEyy`. Use the known season when available; if no season can be inferred, use `Season 00` (existing `tv_unmatched_season = 0` behavior). If series identity is unknown, the original torrent-tree fallback in item 14 takes precedence.
@@ -250,7 +250,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 
 ### Phase 8 — Apply the new quality-root fallback and Kodi TV NFO policy
 
-**Status: planned; not part of the already validated v1.4.6 behavior.**
+**Status: implementation prepared for v1.4.7; automated CI and mini-PC acceptance are release gates.**
 
 **Work**
 
@@ -297,6 +297,6 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 6 — Regression tests passed in GitHub Actions and on the mini-PC (32 tests)
 - [x] Phase 7a — Real-player validation on the mini-PC: Windows/SMB paths and Kodi playback verified
 - [ ] Phase 7b — Create the `v1.4.6` release tag and publish the GitHub Release
-- [ ] Phase 8 — Implement the 4K title-marker fallback and Kodi TV root-only NFO policy
+- [ ] Phase 8 — Implement and validate the 4K title-marker fallback and Kodi TV root-only NFO policy for v1.4.7
 
-The v1.4.6 implementation is merged and validated on the mini-PC. The formal GitHub version tag/release remains pending; the new follow-up behavior in Phase 8 is planned and has not yet been implemented.
+The v1.4.6 implementation is the validated baseline. The v1.4.7 pre-release code is prepared on a separate branch; merge/tag only after GitHub Actions and the mini-PC acceptance checks pass.
