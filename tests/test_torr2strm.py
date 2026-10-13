@@ -316,7 +316,7 @@ def test_kodi_tv_uses_zero_based_original_filestats_order():
         client = FakeClient([t], probes=probes)
         c = cfg(jr, kr)
         assert run(c, client) == 0
-        strms = sorted((kr / "tv" / "1080p").rglob("*.strm"))
+        strms = sorted((kr / "tv" / "4K").rglob("*.strm"))
         assert len(strms) == 2
         assert client.ffprobe_calls == []
         contents = {p.read_text() for p in strms}
@@ -480,7 +480,10 @@ def test_missing_or_unsupported_torrserver_category_stays_uncategorized_without_
         with patch("torr2strm.urllib.request.urlopen", side_effect=AssertionError("unexpected HTTP request")):
             assert run(cfg(jr, kr), client) == 0
         for root in (jr, kr):
-            assert len(list((root / "_uncategorized" / "1080p").rglob("*.strm"))) == 2
+            # Category remains _uncategorized, while the explicit 2160p title
+            # marker independently selects the 4K quality root.
+            assert len(list((root / "_uncategorized" / "1080p").rglob("*.strm"))) == 1
+            assert len(list((root / "_uncategorized" / "4K").rglob("*.strm"))) == 1
             assert not (root / "movie").exists()
             assert not (root / "tv").exists()
 
