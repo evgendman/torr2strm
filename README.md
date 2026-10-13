@@ -158,6 +158,6 @@ Recoverable media-information failures no longer prevent STRMs from being materi
 
 ## Upgrade and deployment
 
-Software version: v1.4.7 (pre-release); manifest format v5; NFO format v3. Phase 8 changes are implemented in the source branch. The GitHub Actions result and mini-PC acceptance checks must pass before publishing a formal `v1.4.7` release tag.
+Software version: v1.4.7 candidate; manifest format v5; NFO format v3. GitHub Actions passed all 33 tests. Mini-PC acceptance—clean rebuild, Kodi scraper discovery, Elementum playback, and shared-series reconciliation—remains pending before publishing a formal `v1.4.7` release tag.
 
 For v1.4.7, back up `/opt/torr2strm/torr2strm.py` and `/etc/torr2strm/config.toml`, stop the timer/service, and clean the contents of the configured Jellyfin and Kodi output roots because their NFO/tree policies are changing. Keep the config and the TorrServer source inventory. Run `install.sh`, verify the installed version, perform a manual dry-run and inspect the log before the first real synchronization. Start the timer only after Kodi scraping and Elementum playback have been checked.
