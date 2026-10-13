@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.7 candidate: implementation and CI complete; mini-PC acceptance pending.** GitHub Actions passed all 33 tests. Phase 8 changes: (1) use a clear `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged. The formal v1.4.7 tag is withheld until mini-PC acceptance passes. The broader quality-root evidence precedence requested during mini-PC validation is tracked separately in Phase 9 and is not part of v1.4.7.
+> **v1.4.7 candidate: implementation and CI complete; mini-PC acceptance pending.** GitHub Actions passed all 33 tests. Phase 8 changes: (1) use a clear `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged. Mini-PC acceptance also exposed a Kodi path-component length defect; the component-bounding fix and regressions in Phase 8b are required before publishing v1.4.7. The formal tag remains withheld until Phase 8b and the clean-rebuild/player acceptance pass. The broader quality-root evidence precedence requested during mini-PC validation is tracked separately in Phase 9 and is not part of v1.4.7.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -62,11 +62,11 @@ These decisions are settled and should not be reopened during implementation unl
 14. **Unknown series identity:** use the torrent release title as the torrent-level directory name and preserve that torrent's original internal file hierarchy. Do not merge unknown series based on title similarity and do not invent IDs. Add a short torrent hash to the fallback directory name only if it is necessary to resolve an actual path collision.
 15. For identified movies, group releases by trusted movie identity under a readable `<Movie Name> (<Year, if known>)/` directory in the relevant Kodi quality root. If the movie identity is unknown, use the torrent title and preserve the source torrent's internal hierarchy rather than guessing that separate torrents are the same movie.
 16. Keep the existing Kodi playback model: one torrent-level STRM per movie release, no `oindex`; one STRM per playable TV file, with Elementum `oindex` equal to that file's original zero-based FileStats order. Never substitute the sorted path index or TorrServer `/play` file ID.
-17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; Kodi TV episodes do not get matching item-level NFO sidecars. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm` with a matching movie NFO. If quality is unknown, omit the `— <quality>` portion. All Kodi path components, including torrent-internal folders for unidentified items, must be Windows/SMB-safe while preserving `.strm`/`.nfo` extensions; Jellyfin's path builder must remain unchanged.
+17. For a normalized Kodi episode, keep the readable name and `SxxEyy`, then add the quality label if known, and place the short torrent hash last before the extension. Example: `Show S01E01 — 720p [a1b2c3d4].strm`; Kodi TV episodes do not get matching item-level NFO sidecars. Movies follow the same suffix order: `<Movie> (<Year>) — 1080p [a1b2c3d4].strm` with a matching movie NFO. If quality is unknown, omit the `— <quality>` portion. All Kodi path components, including directory names and torrent-internal folders for unidentified items, must be Windows/SMB-safe and length-bounded while preserving `.strm`/`.nfo` extensions; Jellyfin's path builder must remain unchanged.
 18. Use the approved short-hash convention already documented for the tree. Start with 8 characters and increase the length only if short hashes collide at the same output path. Do not lengthen non-conflicting hashes.
 19. If two files in one torrent resolve to the same logical episode and would otherwise have the same destination name, append a source-file ordinal from the original FileStats list (displayed starting at 1) only to the colliding items. This suffix is not added to normal episodes.
 20. Do not fabricate episode or season numbers. If the series identity is known and an episode number can be parsed, use it. If an episode number is unknown, preserve a human-readable source filename rather than inventing `SxxEyy`. Use the known season when available; if no season can be inferred, use `Season 00` (existing `tv_unmatched_season = 0` behavior). If series identity is unknown, the original torrent-tree fallback in item 14 takes precedence.
-21. Preserve deterministic filename sanitization and UTF-8-safe length handling. The basename is for human readability; the full torrent hash and source file identity in the manifest remain authoritative.
+21. Preserve deterministic filename sanitization and UTF-8-safe length handling for both file basenames and directory components. The basename is for human readability; the full torrent hash and source file identity in the manifest remain authoritative.
 
 ### 3.4 NFO contract
 
@@ -270,6 +270,31 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Kodi TV contains only the identified series-root `tvshow.nfo` and no NFO in season folders or beside episode STRMs; Kodi movie and Jellyfin NFO behavior are unchanged.
 - Removing or updating one torrent never removes a shared `tvshow.nfo` still needed by another release.
 - Regression tests and real Kodi scraper/playback checks pass on the mini-PC.
+### Phase 8b — Bound Kodi path components and prevent overlong directories
+
+**Status: required corrective fix discovered during v1.4.7 mini-PC acceptance; must pass before the formal v1.4.7 tag.**
+
+**Reason**
+
+The mini-PC dry run for *The Prestige* produced a Kodi movie-directory component of 259 UTF-8 bytes, exceeding the common Linux filesystem component limit of 255 bytes. `bounded_kodi_leaf()` already limits STRM/NFO basenames, but `sanitize_kodi_component()` only replaces Windows-incompatible characters and does not limit length. `clean_media_component()` can therefore create an overlong directory even though the item filename itself is bounded. This is a coverage gap, not a reason to remove the existing Windows/SMB sanitization.
+
+**Work**
+
+- Keep the existing Kodi-only Windows/SMB sanitization: replace forbidden Windows filename characters, protect reserved device names, remove trailing dots/spaces, and preserve real `.strm`/`.nfo` extensions. Do not weaken or remove this behavior.
+- Add one shared bounded-component helper for Kodi paths. Apply Windows-safe normalization and then enforce a conservative maximum of 255 UTF-8 bytes per component, including any collision suffix. Truncate only on UTF-8 character boundaries.
+- Preserve short names exactly. For a component that must be shortened, retain a readable prefix and add a deterministic short identity suffix where needed. The suffix must fit inside the byte budget; do not generate unstable names from process order or timestamps.
+- Apply the bound to every generated Kodi directory and file component, including normalized movie/series directory names, fallback torrent-title directories, and torrent-internal folders. Keep the existing filename-specific helpers responsible for their quality/hash suffixes and extensions, while ensuring their results also satisfy the common component invariant.
+- Resolve collisions **after** Windows normalization and length truncation. Different long names that collapse to the same shortened component must remain distinct using a stable provider identity or torrent hash; do not rely on names before normalization to guarantee uniqueness.
+- Do not change Jellyfin path generation, existing short Kodi names, quality labels, playback URIs, `oindex`, manifest identity semantics, NFO behavior, or deletion safeguards.
+- Add regression tests using the *Prestige* title/path from the mini-PC case and adversarial long Unicode names. Assert that every path component in generated Kodi STRM/NFO paths is at most 255 UTF-8 bytes, Windows-incompatible characters and reserved names remain handled, UTF-8 is never split, extensions and quality/hash suffixes survive, truncation collisions are resolved, and repeated syncs do not churn names or damage manifest reconciliation.
+- Test that nested source folders for unidentified torrents are bounded too, not only the top-level movie/series directory. Verify representative paths over the actual Windows/SMB share; treat total-path-length behavior as a separate client/configuration constraint rather than assuming a per-component limit guarantees every full path is portable.
+
+**Exit criteria**
+
+- The exact 259-byte *Prestige* directory case produces a valid, stable Kodi path with no component exceeding 255 UTF-8 bytes.
+- All generated Kodi path components remain Windows/SMB-safe after truncation, and collision tests prove that distinct items do not merge or overwrite one another.
+- Existing short names, `.strm`/`.nfo` extensions, quality/hash conventions, Elementum playback behavior, manifest reconciliation, and all Jellyfin paths remain unchanged.
+- New regression tests pass in CI and on the mini-PC before ordinary synchronization and publication of the v1.4.7 tag.
 
 ### Phase 9 — Correct quality-root evidence precedence
 
@@ -313,7 +338,7 @@ Mini-PC dry-run validation showed releases whose torrent/file paths contain expl
 
 ## 6. Definition of done
 
-The follow-up is complete when the independent Kodi tree groups identified releases by stable IDs; unknown items preserve their source layout; quality-root evidence follows the order of existing ffprobe dimensions, explicit structured TorrServer quality metadata, explicit `4K`/`2160p` markers in torrent/file-path release names, and finally the `1080p` default; Kodi TV emits `tvshow.nfo` only at each identified series root and no season/episode NFOs; movie NFO behavior and Jellyfin output behavior remain intact; manifests reconcile shared folders safely; Kodi's internet scraper can identify episodes; playback works; and deletion-safety invariants remain intact.
+The follow-up is complete when the independent Kodi tree groups identified releases by stable IDs; unknown items preserve their source layout; quality-root evidence follows the order of existing ffprobe dimensions, explicit structured TorrServer quality metadata, explicit `4K`/`2160p` markers in torrent/file-path release names, and finally the `1080p` default; all Kodi path components are Windows/SMB-safe, UTF-8-bounded to at most 255 bytes, and collision-safe after truncation; Kodi TV emits `tvshow.nfo` only at each identified series root and no season/episode NFOs; movie NFO behavior and Jellyfin output behavior remain intact; manifests reconcile shared folders safely; Kodi's internet scraper can identify episodes; playback works; and deletion-safety invariants remain intact.
 
 ## 7. Current status
 
@@ -326,8 +351,9 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 6 — Regression tests passed in GitHub Actions and on the mini-PC (32 tests)
 - [x] Phase 7a — Real-player validation on the mini-PC: Windows/SMB paths and Kodi playback verified
 - [x] Phase 8a — Implement the 4K title-marker fallback and Kodi TV root-only NFO policy; GitHub Actions passed (33 tests)
-- [ ] Phase 8b — Clean rebuild and mini-PC acceptance: Kodi internet scraping, Elementum playback, and shared-series reconciliation
-- [ ] Phase 8c — Publish the formal `v1.4.7` release tag after Phase 8b passes
+- [ ] Phase 8b — Bound Kodi path components; add Windows/SMB and UTF-8 length regression tests (release blocker)
+- [ ] Phase 8c — Clean rebuild and mini-PC acceptance: Kodi internet scraping, Elementum playback, shared-series reconciliation, and bounded-path validation
+- [ ] Phase 8d — Publish the formal `v1.4.7` release tag only after Phase 8b and Phase 8c pass
 - [ ] Phase 9 — Implement expanded quality-root evidence precedence in a subsequent version after v1.4.7 acceptance
 
-The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate is already on `main` for controlled mini-PC acceptance; do not publish its formal release tag until Phase 8b passes. Phase 9 is a separate accepted follow-up and must not be mistaken for behavior already implemented in v1.4.7.
+The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate is already on `main` for controlled mini-PC acceptance; the overlong-directory defect found during testing is a release blocker and must be fixed before ordinary synchronization and tagging. Publish v1.4.7 only after Phase 8b path-boundary tests and Phase 8c clean-rebuild/player acceptance pass. Phase 9 is a separate accepted follow-up and must not be mistaken for behavior already implemented in v1.4.7.
