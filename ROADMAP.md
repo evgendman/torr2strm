@@ -272,7 +272,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Regression tests and real Kodi scraper/playback checks pass on the mini-PC.
 ### Phase 8b — Bound Kodi path components and prevent overlong directories
 
-**Status: required corrective fix discovered during v1.4.7 mini-PC acceptance; must pass before the formal v1.4.7 tag.**
+**Status: implementation and regression tests prepared for CI verification; clean mini-PC acceptance remains required before the formal v1.4.7 tag.**
 
 **Reason**
 
@@ -286,6 +286,7 @@ The mini-PC dry run for *The Prestige* produced a Kodi movie-directory component
 - Apply the bound to every generated Kodi directory and file component, including normalized movie/series directory names, fallback torrent-title directories, and torrent-internal folders. Keep the existing filename-specific helpers responsible for their quality/hash suffixes and extensions, while ensuring their results also satisfy the common component invariant.
 - Resolve collisions **after** Windows normalization and length truncation. Different long names that collapse to the same shortened component must remain distinct using a stable provider identity or torrent hash; do not rely on names before normalization to guarantee uniqueness.
 - Do not change Jellyfin path generation, existing short Kodi names, quality labels, playback URIs, `oindex`, manifest identity semantics, NFO behavior, or deletion safeguards.
+- Do not migrate test STRM trees or manifests during this development cycle. For acceptance, stop the service/timer and clear only the configured generated Jellyfin/Kodi output roots, including manifests and root markers, then rebuild from TorrServer inventory. Preserve the configuration and TorrServer data.
 - Add regression tests using the *Prestige* title/path from the mini-PC case and adversarial long Unicode names. Assert that every path component in generated Kodi STRM/NFO paths is at most 255 UTF-8 bytes, Windows-incompatible characters and reserved names remain handled, UTF-8 is never split, extensions and quality/hash suffixes survive, truncation collisions are resolved, and repeated syncs do not churn names or damage manifest reconciliation.
 - Test that nested source folders for unidentified torrents are bounded too, not only the top-level movie/series directory. Verify representative paths over the actual Windows/SMB share; treat total-path-length behavior as a separate client/configuration constraint rather than assuming a per-component limit guarantees every full path is portable.
 
@@ -295,6 +296,7 @@ The mini-PC dry run for *The Prestige* produced a Kodi movie-directory component
 - All generated Kodi path components remain Windows/SMB-safe after truncation, and collision tests prove that distinct items do not merge or overwrite one another.
 - Existing short names, `.strm`/`.nfo` extensions, quality/hash conventions, Elementum playback behavior, manifest reconciliation, and all Jellyfin paths remain unchanged.
 - New regression tests pass in CI and on the mini-PC before ordinary synchronization and publication of the v1.4.7 tag.
+- Acceptance starts from clean generated output roots; no data migration is attempted, and the TorrServer inventory/configuration remain untouched.
 
 ### Phase 9 — Correct quality-root evidence precedence
 

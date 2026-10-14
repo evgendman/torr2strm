@@ -13,6 +13,7 @@ from torr2strm import (
     SyncCoordinator,
     bounded_strm_leaf,
     bounded_kodi_leaf,
+    bounded_kodi_component,
     sanitize_kodi_component,
     extract_btih,
     media_quality,
@@ -776,6 +777,108 @@ def test_bounded_kodi_leaf_preserves_quality_and_hash_when_title_is_too_long():
     duplicate = bounded_kodi_leaf("ОченьДлинноеНазвание" * 30, "720p", "a1b2c3d4", file_ordinal=3)
     assert len((duplicate + ".strm").encode("utf-8")) <= 255
     assert duplicate.endswith(" — 720p [a1b2c3d4] [file03]")
+
+
+def test_bounded_kodi_component_preserves_short_names_and_uses_stable_utf8_suffixes():
+    assert bounded_kodi_component("Short Name", identity="a" * 40) == "Short Name"
+
+    long_name = "Престиж - " + ("ОченьДлинноеНазвание " * 30)
+    first = bounded_kodi_component(long_name, identity="a" * 40)
+    second = bounded_kodi_component(long_name, identity="b" * 40)
+    assert len(first.encode("utf-8")) <= 255
+    assert len(second.encode("utf-8")) <= 255
+    assert first.endswith("[aaaaaaaa]")
+    assert second.endswith("[bbbbbbbb]")
+    assert first != second
+    assert first.encode("utf-8").decode("utf-8") == first
+    assert not first.endswith((".", " "))
+
+    provider_suffix = bounded_kodi_component(long_name, identity="tmdb:123", suffix="tmdb-123")
+    assert len(provider_suffix.encode("utf-8")) <= 255
+    assert provider_suffix.endswith("[tmdb-123]")
+
+
+def test_kodi_long_movie_directories_are_bounded_collision_safe_and_stable():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        long_title = "Престиж - The Prestige - " + ("ОченьДлинноеНазвание " * 28)
+        t1 = torrent(
+            h="a" * 40,
+            title="Prestige.2006.2160p.WEB-DL",
+            category="movie",
+            paths=["Prestige.mkv"],
+            data={"tmdbId": 1001, "movieTitle": long_title, "year": 2006},
+        )
+        t2 = torrent(
+            h="b" * 40,
+            title="Prestige.2006.2160p.WEB-DL",
+            category="movie",
+            paths=["Prestige.mkv"],
+            data={"tmdbId": 1002, "movieTitle": long_title, "year": 2006},
+        )
+        p = probe(3840, 2160)
+        attach_existing_probe(t1, p)
+        attach_existing_probe(t2, p)
+        client = FakeClient([t1, t2])
+        config = cfg(jr, kr)
+        config["outputs"]["jellyfin"]["enabled"] = False
+
+        assert run(config, client) == 0
+        root = kr / "movie" / "4K"
+        dirs = sorted(p for p in root.iterdir() if p.is_dir())
+        assert len(dirs) == 2
+        assert dirs[0].name != dirs[1].name
+        assert any(p.name.endswith("[tmdb-1001]") for p in dirs)
+        assert any(p.name.endswith("[tmdb-1002]") for p in dirs)
+
+        for path in kr.rglob("*"):
+            for component in path.relative_to(kr).parts:
+                assert len(component.encode("utf-8")) <= 255, (path, component)
+                for invalid in '<>:"|?*':
+                    assert invalid not in component
+                assert "\\" not in component
+                assert not component.endswith((".", " "))
+
+        before = sorted(str(p.relative_to(kr)) for p in kr.rglob("*.strm"))
+        assert len(before) == 2
+        assert len(list(kr.rglob("*.nfo"))) == 2
+        assert run(config, client) == 0
+        after = sorted(str(p.relative_to(kr)) for p in kr.rglob("*.strm"))
+        assert before == after
+
+
+def test_kodi_unknown_torrent_bounds_nested_source_directories_and_resolves_truncation_collisions():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        prefix = "ОченьДлинныйКаталог" * 18
+        folder_a = prefix + "A"
+        folder_b = prefix + "B"
+        t = torrent(
+            h="c" * 40,
+            title="Unknown nested movie",
+            category="movie",
+            paths=[f"{folder_a}/EpisodeA.mkv", f"{folder_b}/EpisodeB.mkv"],
+            lengths=[1000, 900],
+            data={},
+        )
+        client = FakeClient([t])
+        config = cfg(jr, kr)
+        config["outputs"]["jellyfin"]["enabled"] = False
+
+        assert run(config, client) == 0
+        strms = sorted(kr.rglob("*.strm"))
+        assert len(strms) == 2
+        parent_names = {p.parent.name for p in strms}
+        assert len(parent_names) == 2
+        for path in strms:
+            for component in path.relative_to(kr).parts:
+                assert len(component.encode("utf-8")) <= 255, (path, component)
+                for invalid in '<>:"|?*':
+                    assert invalid not in component
+                assert "\\" not in component
+                assert not component.endswith((".", " "))
 
 
 def test_kodi_different_series_ids_with_same_name_and_year_get_id_suffixes():

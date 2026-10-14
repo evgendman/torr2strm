@@ -36,6 +36,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 VERSION = "1.4.7"
+KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
 LOG = logging.getLogger("torr2strm")
@@ -166,6 +167,58 @@ def truncate_utf8(value: str, max_bytes: int) -> str:
         except UnicodeDecodeError:
             cut = cut[:-1]
     return "_"
+
+
+def bounded_kodi_component(
+    value: str,
+    identity: str | None = None,
+    suffix: str | None = None,
+    max_bytes: int = KODI_COMPONENT_MAX_BYTES,
+) -> str:
+    """Return a Windows-safe Kodi path component within the UTF-8 byte limit.
+
+    Short, unsuffixed components are returned unchanged after normal Kodi
+    sanitization. Long components receive a deterministic identity suffix.
+    A supplied suffix can preserve a collision convention such as a provider ID
+    or short torrent hash when the prefix must be shortened.
+    Jellyfin naming deliberately does not use this helper.
+    """
+    clean = sanitize_kodi_component(value)
+    clean_bytes = len(clean.encode("utf-8"))
+
+    if suffix is None and clean_bytes <= max_bytes:
+        return clean
+
+    identity_text = str(identity or clean)
+    if suffix is not None:
+        suffix_clean = sanitize_kodi_component(str(suffix))
+        suffix_text = f" [{suffix_clean}]"
+        if len(suffix_text.encode("utf-8")) >= max_bytes:
+            token = hashlib.sha256(identity_text.encode("utf-8")).hexdigest()[:8]
+            suffix_text = f" [{token}]"
+        elif clean_bytes + len(suffix_text.encode("utf-8")) <= max_bytes:
+            return f"{clean}{suffix_text}"
+    else:
+        if re.fullmatch(r"(?i)[0-9a-f]{40}", identity_text):
+            token = identity_text[:8].lower()
+        else:
+            token = hashlib.sha256(identity_text.encode("utf-8")).hexdigest()[:8]
+        suffix_text = f" [{token}]"
+
+    suffix_bytes = len(suffix_text.encode("utf-8"))
+    budget = max_bytes - suffix_bytes
+    if budget < 1:
+        token = hashlib.sha256(identity_text.encode("utf-8")).hexdigest()[:8]
+        suffix_text = f" [{token}]"
+        budget = max_bytes - len(suffix_text.encode("utf-8"))
+    prefix = truncate_utf8(clean, budget).rstrip(". ")
+    if not prefix:
+        prefix = "_"
+    result = f"{prefix}{suffix_text}"
+    if len(result.encode("utf-8")) > max_bytes:
+        prefix = truncate_utf8(prefix, max_bytes - len(suffix_text.encode("utf-8"))).rstrip(". ") or "_"
+        result = f"{prefix}{suffix_text}"
+    return result
 
 
 def extract_tv_series_name(title: str, files: tuple[TorrentFile, ...]) -> str:
@@ -1666,7 +1719,10 @@ class OutputRunner:
         if snap.quality not in {"4K", "1080p"}:
             raise RuntimeError(f"torrent {snap.hash}: missing quality")
         if self.spec.name == "kodi":
-            name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_kodi_component(snap.title))
+            name = self.kodi_dirname_by_hash.get(
+                snap.hash,
+                bounded_kodi_component(snap.title, identity=snap.hash),
+            )
         else:
             # Jellyfin's existing per-torrent naming and folder behavior is unchanged.
             name = build_torrent_dir_name(snap.title, snap.metadata, snap.hash, snap.category, snap.files)
@@ -1939,16 +1995,26 @@ class OutputRunner:
             for _, _, _, h in candidates:
                 self.kodi_display_title_by_hash[h] = title
 
+        raw_components: dict[tuple[str, str, str], str] = {}
         collisions: dict[tuple[str, str, str], set[str]] = {}
-        for (category, quality_root, identity), (title, year) in base_components.items():
-            component = clean_media_component(title, year)
-            collisions.setdefault((category, quality_root, component.casefold()), set()).add(identity)
         for key, (title, year) in base_components.items():
             category, quality_root, identity = key
             component = clean_media_component(title, year)
+            raw_components[key] = component
+            collisions.setdefault((category, quality_root, component.casefold()), set()).add(identity)
+
+        for key, (title, year) in base_components.items():
+            category, quality_root, identity = key
+            component = raw_components[key]
             if len(collisions.get((category, quality_root, component.casefold()), set())) > 1:
                 kind, value = identity.split(":", 1)
-                component = sanitize_kodi_component(f"{component} [{kind}-{value}]")
+                component = bounded_kodi_component(
+                    component,
+                    identity=identity,
+                    suffix=f"{kind}-{value}",
+                )
+            else:
+                component = bounded_kodi_component(component, identity=identity)
             for _, _, _, h in grouped[key]:
                 self.kodi_dirname_by_hash[h] = component
             # A shared tvshow.nfo must be stable across all releases. Store only
@@ -1964,11 +2030,16 @@ class OutputRunner:
         for key, hashes in fallback.items():
             if len(hashes) == 1:
                 h = hashes[0]
-                self.kodi_dirname_by_hash[h] = self.kodi_display_title_by_hash[h]
+                self.kodi_dirname_by_hash[h] = bounded_kodi_component(
+                    self.kodi_display_title_by_hash[h],
+                    identity=h,
+                )
             else:
                 for h in hashes:
-                    self.kodi_dirname_by_hash[h] = sanitize_kodi_component(
-                        f"{self.kodi_display_title_by_hash[h]} [{self.kodi_hash_by_torrent[h]}]"
+                    self.kodi_dirname_by_hash[h] = bounded_kodi_component(
+                        self.kodi_display_title_by_hash[h],
+                        identity=h,
+                        suffix=self.kodi_hash_by_torrent[h],
                     )
 
     def _kodi_episode_basename(self, snap: TorrentSnapshot, file: TorrentFile, duplicate: bool = False) -> str:
@@ -2007,7 +2078,10 @@ class OutputRunner:
     ) -> dict[str, Any] | None:
         if snap.quality not in {"4K", "1080p"}:
             snap = replace(snap, quality="1080p")
-        directory_name = self.kodi_dirname_by_hash.get(snap.hash, sanitize_kodi_component(snap.title))
+        directory_name = self.kodi_dirname_by_hash.get(
+            snap.hash,
+            bounded_kodi_component(snap.title, identity=snap.hash),
+        )
         torrent_dir = safe_join(self.root, snap.category, snap.quality, directory_name)
         self._assert_no_symlink(torrent_dir.parent)
         self._assert_no_symlink(torrent_dir)
@@ -2063,7 +2137,20 @@ class OutputRunner:
                     leaf = self._kodi_episode_basename(snap, file, duplicate=duplicate)
                 else:
                     # Unknown identity: retain the source torrent's internal hierarchy.
-                    target_dir = safe_join(torrent_dir, *(sanitize_kodi_component(part) for part in PurePosixPath(file.path).parent.parts))
+                    # Bound each component of the original torrent hierarchy.
+                    # Include the torrent hash and source path prefix in the
+                    # identity so long sibling names cannot collapse after truncation.
+                    source_prefix: list[str] = []
+                    safe_parts: list[str] = []
+                    for part in PurePosixPath(file.path).parent.parts:
+                        source_prefix.append(part)
+                        safe_parts.append(
+                            bounded_kodi_component(
+                                part,
+                                identity=f"{snap.hash}:{'/'.join(source_prefix)}",
+                            )
+                        )
+                    target_dir = safe_join(torrent_dir, *safe_parts)
                     leaf = self._kodi_fallback_basename(snap, file)
                 playback = self._elementum_url(snap, file)
                 targets.append((file, target_dir, playback, leaf, normalized_tv))

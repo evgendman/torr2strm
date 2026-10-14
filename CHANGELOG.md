@@ -4,7 +4,9 @@
 
 - Use usable video dimensions already embedded in TorrServer metadata as the first choice for the quality root. When such dimensions are unavailable, an explicit `4K` or `2160p` marker in the release title may select the `4K` root; usable non-4K dimensions always override title markers.
 - In Kodi TV output, stop creating per-episode NFO sidecars. Create `tvshow.nfo` only at the root of an identified series and keep it until no managed release references it.
-- Preserve Kodi movie NFOs, Jellyfin paths and NFO behavior, NFO format v3, manifest format v5, and the no-network/no-new-ffprobe policy.
+- Bound every Kodi directory and file component to 255 UTF-8 bytes using stable suffixes for truncated names; keep Windows/SMB sanitization and resolve collisions after truncation.
+- Add regressions for an overlong Prestige-style movie directory, long UTF-8 components, colliding long source folders, and stable repeat syncs.
+- Require a clean rebuild of the disposable STRM trees for candidate acceptance; no directory or manifest migration is implemented. Preserve Kodi movie NFOs, Jellyfin paths/NFO behavior, NFO format v3, manifest format v5, and the no-network/no-new-ffprobe policy.
 
 
 ## 1.4.6

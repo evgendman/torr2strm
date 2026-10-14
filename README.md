@@ -35,7 +35,7 @@ Default root:
 - `tv`: one `.strm` per playable video file, with the original zero-based FileStats order passed as `oindex`.
 - Playback URI uses `plugin://plugin.video.elementum/play?uri=<url-encoded-full-magnet>`.
 - The Kodi output is read-only: deleting a Kodi STRM never removes the TorrServer source.
-- Kodi path components are sanitized for Windows/SMB clients: forbidden punctuation and reserved device names are handled while `.strm`/`.nfo` extensions and readable names are preserved. Jellyfin's historical path naming is unchanged.
+- Kodi path components are sanitized for Windows/SMB clients: forbidden punctuation and reserved device names are handled, each component is bounded to 255 UTF-8 bytes, and long components receive stable identity suffixes while `.strm`/`.nfo` extensions and readable names are preserved. Jellyfin's historical path naming is unchanged.
 
 Default root:
 
@@ -92,7 +92,7 @@ A valid reusable NFO may be copied between output trees for the same source file
 
 NFO format version 3 remains independent from software and manifest versions. Kodi movie NFOs and series-root `tvshow.nfo` files use the `<torr2strm formatversion="3" />` marker and a Combination NFO URL after the XML root when a trustworthy TMDb ID is known. Kodi TV episode sidecar NFOs are not generated; Jellyfin's existing episode NFOs remain ordinary XML.
 
-The v1.4.7 tree-layout/NFO policy change is deployed with a clean rebuild rather than a directory-tree migration. Stop the service/timer and clear only the two configured output-root contents (including each `.torr2strm` manifest and root marker) before the first real sync. Keep `/etc/torr2strm/config.toml`; do not clear TorrServer data or any media/cache directories outside the configured output roots.
+The v1.4.7 tree-layout/NFO policy change is deployed with a clean rebuild rather than a directory-tree or manifest migration; no data migration is attempted. Stop the service/timer and clear only the two configured output-root contents (including each `.torr2strm` manifest and root marker) before the first real sync. Keep `/etc/torr2strm/config.toml`; do not clear TorrServer data or any media/cache directories outside the configured output roots.
 
 ## Reverse deletion
 
