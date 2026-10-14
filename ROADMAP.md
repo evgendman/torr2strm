@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.7 candidate: implementation and CI complete; mini-PC acceptance pending.** GitHub Actions passed all 33 tests. Phase 8 changes: (1) use a clear `4K`/`2160p` release-title marker as a fallback for the `4K` root only when usable video dimensions are unavailable; (2) in Kodi TV output, generate `tvshow.nfo` only at the root of an identified series and omit season-folder and episode-sidecar NFOs. Jellyfin's existing output behavior remains unchanged. Mini-PC acceptance also exposed a Kodi path-component length defect; the component-bounding fix and regressions in Phase 8b are required before publishing v1.4.7. The formal tag remains withheld until Phase 8b and the clean-rebuild/player acceptance pass. The broader quality-root evidence precedence requested during mini-PC validation is tracked separately in Phase 9 and is not part of v1.4.7.
+> **v1.4.7 candidate: implementation, CI, and mini-PC clean-rebuild/path acceptance complete.** GitHub Actions passed 36 tests at commit `387696cde4eb9682a231eb4d893b6c5344981a95`. On 2026-10-14, the mini-PC installed that exact commit and completed a clean rebuild/synchronization across 50 TorrServer torrents: `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, `failed=1`. The sole logged skip was the expected `QUALITY_SKIP: no video files` for a Blu-ray ISO; no other synchronization errors were found. The output audit counted Jellyfin 663 STRM/694 NFO and Kodi 561 STRM/32 NFO; every audited path component in both trees was at most 255 UTF-8 bytes. The Prestige Kodi directory is 255 bytes and Kodi Windows/SMB component checks passed. The candidate is accepted for scheduled synchronization; the formal release tag has not been published. Phase 9 remains a separate follow-up and is not part of v1.4.7.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -272,7 +272,7 @@ These checkboxes mean the decisions are settled, not that code or regression fix
 - Regression tests and real Kodi scraper/playback checks pass on the mini-PC.
 ### Phase 8b — Bound Kodi path components and prevent overlong directories
 
-**Status: implementation and regression tests prepared for CI verification; clean mini-PC acceptance remains required before the formal v1.4.7 tag.**
+**Status: implementation, regression tests, CI, and mini-PC path acceptance complete.** GitHub Actions passed 36 tests; the clean rebuild and Windows/SMB component audit passed on 2026-10-14. The formal release tag remains a separate publication step.
 
 **Reason**
 
@@ -353,9 +353,9 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 6 — Regression tests passed in GitHub Actions and on the mini-PC (32 tests)
 - [x] Phase 7a — Real-player validation on the mini-PC: Windows/SMB paths and Kodi playback verified
 - [x] Phase 8a — Implement the 4K title-marker fallback and Kodi TV root-only NFO policy; GitHub Actions passed (33 tests)
-- [ ] Phase 8b — Bound Kodi path components; add Windows/SMB and UTF-8 length regression tests (release blocker)
-- [ ] Phase 8c — Clean rebuild and mini-PC acceptance: Kodi internet scraping, Elementum playback, shared-series reconciliation, and bounded-path validation
+- [x] Phase 8b — Bound Kodi path components; 36 CI tests passed, including Windows/SMB and UTF-8 length regressions
+- [x] Phase 8c — Mini-PC clean rebuild and acceptance: 50-torrent synchronization, output/manifests regenerated, Prestige directory bounded to 255 UTF-8 bytes, and both output trees passed path-component audits; Phase 7a records prior real-player validation
 - [ ] Phase 8d — Publish the formal `v1.4.7` release tag only after Phase 8b and Phase 8c pass
 - [ ] Phase 9 — Implement expanded quality-root evidence precedence in a subsequent version after v1.4.7 acceptance
 
-The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate is already on `main` for controlled mini-PC acceptance; the overlong-directory defect found during testing is a release blocker and must be fixed before ordinary synchronization and tagging. Publish v1.4.7 only after Phase 8b path-boundary tests and Phase 8c clean-rebuild/player acceptance pass. Phase 9 is a separate accepted follow-up and must not be mistaken for behavior already implemented in v1.4.7.
+The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate on `main` has passed the 36-test GitHub Actions run and the mini-PC clean-rebuild/path acceptance recorded above, and is accepted for ordinary scheduled synchronization. The formal `v1.4.7` release tag has not yet been published. Phase 9 is a separate accepted follow-up and must not be mistaken for behavior already implemented in v1.4.7.
