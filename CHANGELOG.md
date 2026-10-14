@@ -12,6 +12,7 @@
 - Mini-PC acceptance completed on 2026-10-14 using commit `387696cde4eb9682a231eb4d893b6c5344981a95` after a clean rebuild of both generated output trees. The 50-torrent sync reported `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, and `failed=1`. The only logged skip/error was the expected `QUALITY_SKIP: no video files` for a Blu-ray ISO; there were no other synchronization errors.
 - Post-sync path audit: Jellyfin contained 663 STRM and 694 NFO files; Kodi contained 561 STRM and 32 NFO files. Every audited path component in both trees was at most 255 UTF-8 bytes. The Prestige Kodi movie directory was shortened to 255 bytes, and the Kodi Windows/SMB component checks passed.
 - Disc/ISO source filtering remains the responsibility of Sonarr/Radarr quality and release-selection settings; torr2strm remains a STRM tree generator and skips items that expose no playable video files. The v1.4.7 candidate is accepted for scheduled synchronization; publishing a formal release tag is a separate step.
+- Scheduled-operation acceptance completed on the mini-PC on 2026-10-14: `torr2strm.timer` was enabled and active; the first timer-triggered run completed successfully with `created=0`, `updated=0`, `unchanged=98`, `failed=1` (the same expected Blu-ray ISO/no-video skip). `torr2strm.service` returned to `inactive` after completing normally, and systemd reported the next run for `2026-10-14 20:16:31 +05:00`.
 
 ## 1.4.6
 
