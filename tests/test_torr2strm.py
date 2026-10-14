@@ -857,8 +857,8 @@ def test_kodi_unknown_torrent_bounds_nested_source_directories_and_resolves_trun
         folder_b = prefix + "B"
         t = torrent(
             h="c" * 40,
-            title="Unknown nested movie",
-            category="movie",
+            title="Unknown nested TV release",
+            category="tv",
             paths=[f"{folder_a}/EpisodeA.mkv", f"{folder_b}/EpisodeB.mkv"],
             lengths=[1000, 900],
             data={},
