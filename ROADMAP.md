@@ -327,6 +327,38 @@ Mini-PC dry-run validation showed releases whose torrent/file paths contain expl
 - `1080p` remains the default only when no higher-priority source supports 4K; the folder/source workflow itself is never treated as proof of resolution.
 - All regression tests pass, including the mini-PC dry-run cases, before the updated classifier is used for ordinary synchronization.
 
+### Phase 10 — Backward-compatible orchestration and run reports for torr2jellyfin
+
+**Status: planned integration work; not implemented in v1.4.7.** This phase must not change or remove the existing standalone workflow.
+
+**Goal**
+
+Allow `torr2strm` to run either as a standalone synchronizer under its existing CLI/systemd timer, or as the execution engine launched and monitored by the Jellyfin plugin `torr2jellyfin`. Both modes must use the same synchronization implementation, configuration semantics, manifests, output layout, and safety rules.
+
+**Work**
+
+- Preserve the existing standalone interface: `--config`, `--dry-run`, `--version`, the current TOML configuration, and operation via `torr2strm.service` + `torr2strm.timer`. Do not make the Jellyfin plugin a mandatory dependency.
+- Define an explicit deployment/operation choice: (a) standalone automatic mode, where systemd timer controls regular synchronization; or (b) plugin-controlled mode, where the plugin initiates runs and owns the user-facing schedule. Document how to ensure the timer does not start duplicate cycles in plugin-controlled mode.
+- Prefer a one-shot CLI/service invocation over adding a permanently running HTTP server in the first integration version. Choose the exact plugin-to-process/systemd launch mechanism with least privilege; do not grant the Jellyfin process unrestricted root execution.
+- Add a non-mutating health/check command (for example `--check`) that validates the configuration, reachability of TorrServer, output-root state, and relevant filesystem access. It must not execute a normal synchronization or alter media trees/manifest state. Clearly distinguish a binary/version check from a full dependency health check.
+- Add a versioned machine-readable JSON run report (for example through `--report-json PATH`) independent of human-readable logs. The report should include run ID, service/software and report-schema versions, start/end time, overall state, exit status, configured output roots, aggregate counts, warnings, fatal errors, and per-item/per-output error summaries where practical.
+- Report meaningful change information by logical subdirectory, at minimum `movie/4K`, `movie/1080p`, `tv/4K`, and `tv/1080p`, while also handling `_uncategorized` and any future/other generated subdirectories. Track changes using the synchronizer's own reconciliation operations/manifest, not by requiring the plugin to duplicate manifest interpretation or rescan the filesystem independently.
+- Capture additions, updates, removals and any other changes to STRM/NFO files relevant to Jellyfin scanning. Do not infer that a directory changed solely because the manifest timestamp or whole manifest file changed.
+- Distinguish successful completion, completion with per-item warnings/errors, fatal run failure, and cancellation/interruption. The current behavior may return success for a run with recoverable per-torrent failures, so the JSON report must not equate exit code zero with a completely clean media run.
+- Publish the report atomically and make its schema durable/documented. Write useful failure information even when configuration loading or the source request fails, as far as the invocation context permits. Retain normal logs for diagnostics.
+- Ensure the same inter-process lock protects every execution entry point: manual CLI, systemd timer, and plugin-triggered execution. The existing `flock` wrapper in the systemd unit alone does not protect a caller that invokes the Python script directly. Move locking into a common launcher/service entrypoint or another shared mechanism and test contention explicitly.
+- If plugin-controlled mode is active, there must be one authoritative automatic scheduler. Avoid an active systemd timer plus a separate plugin timer unless an explicit supported coordination design prevents duplicate runs. Manual standalone execution should remain available where operationally safe.
+- Add tests for report schema/versioning, empty and unchanged syncs, additions/updates/removals in each logical subdirectory, uncategorized items, partial item failures, fatal configuration/source failures, cancellation, concurrent launch attempts, and compatibility of existing standalone CLI/timer operation.
+- Document the integration contract for `torr2jellyfin`: invocation method, check semantics, exit codes, report path/schema, status meanings, per-directory change semantics, lock behavior, and mode-selection procedure.
+
+**Exit criteria**
+
+- Existing CLI and standalone systemd-timer behavior continue to work unchanged for existing users.
+- Plugin-triggered runs execute the same synchronizer exactly once, cannot mutate the output concurrently with another run, and return a durable structured report.
+- The report accurately identifies which logical output directories had media-file changes, including removals, and distinguishes clean success, partial errors and fatal failure.
+- The plugin can decide whether to scan each Jellyfin library using the report without parsing human-readable logs or independently reimplementing the manifest logic.
+- The standalone and plugin-controlled installation modes are documented and covered by regression tests; the Jellyfin plugin is not a runtime requirement for standalone installations.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -357,5 +389,6 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8c — Mini-PC clean rebuild/path acceptance and scheduled-operation verification: regenerated both output trees, bounded Prestige directory to 255 UTF-8 bytes, passed both path audits, enabled timer, and confirmed first timer-triggered run completed with 98 unchanged entries
 - [ ] Phase 8d — Publish the formal `v1.4.7` release tag only after Phase 8b and Phase 8c pass
 - [ ] Phase 9 — Implement expanded quality-root evidence precedence in a subsequent version after v1.4.7 acceptance
+- [ ] Phase 10 — Add backward-compatible orchestration/check/report interface for torr2jellyfin while preserving standalone CLI and timer operation
 
 The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate on `main` has passed the 36-test GitHub Actions run, mini-PC clean-rebuild/path acceptance, and first timer-triggered synchronization recorded above; it is accepted for ordinary scheduled operation. The timer is enabled on the validated mini-PC. The formal `v1.4.7` release tag has not yet been published. Phase 9 is a separate accepted follow-up and must not be mistaken for behavior already implemented in v1.4.7.
