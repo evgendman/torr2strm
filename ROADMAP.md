@@ -359,6 +359,34 @@ Allow `torr2strm` to run either as a standalone synchronizer under its existing 
 - The plugin can decide whether to scan each Jellyfin library using the report without parsing human-readable logs or independently reimplementing the manifest logic.
 - The standalone and plugin-controlled installation modes are documented and covered by regression tests; the Jellyfin plugin is not a runtime requirement for standalone installations.
 
+### Phase 11 — Isolate temporarily unavailable torrents and preserve their existing output
+
+**Status: planned resilience improvement; not implemented in v1.4.7.**
+
+**Reason**
+
+Currently, `_get_snapshot_list()` raises a fatal error if a torrent appears in the TorrServer inventory but its file structure (`FileStats`) remains absent after the metadata-load request and bounded wait. Because this happens before output reconciliation starts, one problematic torrent aborts the entire synchronization cycle. The intended improvement is to let healthy torrents synchronize while ensuring a temporarily unreadable torrent is not mistaken for a source deletion and its existing Jellyfin/Kodi STRM/NFO tree is not removed.
+
+**Work**
+
+- Separate a globally unusable source inventory/API failure from a recoverable per-torrent metadata failure. A failed list request, structurally invalid inventory, or other error that makes the overall source snapshot untrustworthy may remain fatal; a single hash whose details/FileStats are temporarily unavailable should be isolated.
+- Track hashes that are definitely present in the raw TorrServer inventory but were deferred because `action=get`, metadata loading, `FileStats` parsing, or another explicitly recoverable per-item source step failed. Record a structured warning with hash, stage, reason, and retry-on-next-run semantics.
+- Continue snapshot parsing, quality processing, and output synchronization for all other healthy torrents. Report deferred/unavailable counts separately from deterministic skips such as a valid torrent with no playable video files.
+- Protect each deferred hash during reconciliation. If either output manifest already contains that hash, retain its previous manifest record and its managed directory/STRM/NFO files unchanged; do not reinterpret the absent new snapshot as `torrent_missing_on_torrserver`, and do not prune shared Kodi series/season content still referenced by the retained record.
+- If a deferred hash has never been materialized, do not invent a file tree without valid FileStats. Record it as deferred and retry on the next scheduled run.
+- Keep the meaning of “source removed” strict: only a hash absent from a successfully retrieved TorrServer inventory is eligible for the normal source-disappearance cleanup path. A hash visible in inventory but missing metadata is not confirmed removed.
+- Once valid metadata becomes available on a later run, process the hash normally and reconcile its tree against the new verified file list. Retention while deferred must not prevent legitimate updates or removals after a later successful snapshot.
+- Ensure deferred hashes are protected in both Jellyfin and Kodi, including shared Kodi series roots and manifests; do not enable Kodi reverse deletion and do not weaken the existing opt-in Jellyfin deletion policy.
+- Add tests for: one failing FileStats hash alongside healthy hashes; preservation of existing STRM/NFO files and manifest records in both outputs; a first-seen deferred hash creating no guessed output; genuinely absent source hashes still being cleaned up; recovery after FileStats become available; and truly global source/API failure remaining fatal. Verify summary counters and exit/report semantics distinguish a partial/deferred run from complete success.
+
+**Exit criteria**
+
+- A single temporary FileStats/metadata failure no longer aborts synchronization of otherwise healthy TorrServer items.
+- Existing output files and manifest records for deferred hashes remain byte-for-byte unchanged until a valid later snapshot is available.
+- Deferred hashes cannot be removed from output trees merely because the current run could not read their file structure.
+- Confirmed source disappearance, intentional Jellyfin reverse deletion, shared Kodi-folder safety, and normal successful reconciliation retain their current behavior.
+- Automated regressions pass before the resilience behavior is deployed to scheduled synchronization.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -390,5 +418,6 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [ ] Phase 8d — Publish the formal `v1.4.7` release tag only after Phase 8b and Phase 8c pass
 - [ ] Phase 9 — Implement expanded quality-root evidence precedence in a subsequent version after v1.4.7 acceptance
 - [ ] Phase 10 — Add backward-compatible orchestration/check/report interface for torr2jellyfin while preserving standalone CLI and timer operation
+- [ ] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents
 
-The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate on `main` has passed the 36-test GitHub Actions run, mini-PC clean-rebuild/path acceptance, and first timer-triggered synchronization recorded above; it is accepted for ordinary scheduled operation. The timer is enabled on the validated mini-PC. The formal `v1.4.7` release tag has not yet been published. Phase 9 is a separate accepted follow-up and must not be mistaken for behavior already implemented in v1.4.7.
+The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate on `main` has passed the 36-test GitHub Actions run, mini-PC clean-rebuild/path acceptance, and first timer-triggered synchronization recorded above; it is accepted for ordinary scheduled operation. The timer is enabled on the validated mini-PC. The formal `v1.4.7` release tag has not yet been published. Phases 9, 10, and 11 are separate follow-ups and must not be mistaken for behavior already implemented in v1.4.7.
