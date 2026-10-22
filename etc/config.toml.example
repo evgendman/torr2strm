@@ -1,4 +1,4 @@
-# torr2strm v1.4.7
+# torr2strm v1.4.8
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
@@ -44,3 +44,15 @@ video_extensions = [
 
 [logging]
 level = "INFO"
+
+# Aggregated warning/error alerts through the shared Apprise API.
+# Disabled until the gateway and arr-stack key are verified.
+[notifications]
+enabled = false
+apprise_url = "http://192.168.0.14:8000"
+apprise_config_key = "arr-stack"
+service_name = "torr2strm / MINI-Ubuntu"
+timeout_sec = 5
+tag_warning = "warnings"
+tag_critical = "critical"
+state_path = "/var/lib/torr2strm/notification_state.json"
