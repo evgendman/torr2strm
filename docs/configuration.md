@@ -3,7 +3,7 @@
 Production file: `/etc/torr2strm/config.toml`.
 Example shipped with the repository: [`etc/config.toml.example`](../etc/config.toml.example).
 
-`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.8 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
+`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.10 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
 
 ## Complete parameter map
 
@@ -51,7 +51,7 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 
 For Kodi TV, an identified series receives one root-level `tvshow.nfo`; season folders and episode STRMs do not get NFO sidecars. Jellyfin's existing per-item NFO output and Kodi movie NFO behavior are unchanged.
 
-Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.8 and can be removed.
+Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.10 and can be removed.
 
 ### [notifications]
 
@@ -66,7 +66,7 @@ Legacy [quality] timeout/retry keys and [jacred] configuration tables in existin
 | tag_critical | critical | Apprise tag for error events. |
 | state_path | /var/lib/torr2strm/notification_state.json | Persistent warning/error fingerprints, separate from media manifests and TorrServer state. |
 
-The API contract is `POST {apprise_url}/notify/{apprise_config_key}` with JSON fields `title`, `body`, `type`, and `tag`. Warnings use type `warning` and tag `warnings`; errors use type `failure` and tag `critical`. Telegram credentials and topic IDs stay in the shared gateway. Events are aggregated by severity; unchanged fingerprints are not resent on every timer run, and a clean cycle resets the fingerprint. Delivery failures are logged but never fail synchronization.
+The API contract is `POST {apprise_url}/notify/{apprise_config_key}` with JSON fields `title`, `body`, `type`, and `tag`. Warnings use type `warning` and tag `warnings`; errors use type `failure` and tag `critical`. Telegram credentials and topic IDs stay in the shared gateway. Events are aggregated by severity; unchanged fingerprints are not resent on every timer run, and a clean cycle resets the fingerprint. Delivery failures are logged but never fail synchronization. For filename collisions, the warning event is summarized once per torrent and includes the release title, full hash, affected-file count and representative source paths. Per-file STRM_COLLISION_RESOLVED / STRM_COLLISION_HASH_EXTENDED records remain in the journal but are excluded from the Apprise body to keep the alert concise; an unresolved-collision error includes the title.
 
 ### `[logging]`
 

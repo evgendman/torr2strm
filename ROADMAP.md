@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.9 is published and accepted on the reference mini-PC (2026-10-22).** The multi-disc Lexx VOB filename collisions are resolved using the short torrent hash plus exact TorrServer `file_id`; 22 unique Jellyfin STRM files were verified. The real sync and a follow-up dry run passed, with 304 outputs unchanged on the repeat run, and the systemd timer has been restored. One known `QUALITY_SKIP` remains for a Blu-ray ISO with no video files; this is separate from collision handling.
+> **v1.4.9 is published and accepted on the reference mini-PC (2026-10-22).** The multi-disc Lexx VOB filename collisions are resolved using the short torrent hash plus exact TorrServer `file_id`; 22 unique Jellyfin STRM files were verified. The real sync and a follow-up dry run passed, with 304 outputs unchanged on the repeat run, and the systemd timer has been restored. One known `QUALITY_SKIP` remains for a Blu-ray ISO with no video files; this is separate from collision handling. A follow-up usability fix is being prepared as v1.4.10 after Telegram warning messages showed 22 per-file collision records without naming the affected release; the patch will send one concise, title-bearing summary per torrent and retain full details in the local journal.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -418,6 +418,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8d — Publish the formal `v1.4.7` release/tag (published 2026-10-13; mini-PC acceptance passed 2026-10-14)
 - [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8; CI passed, mini-PC acceptance pending)
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
+- [ ] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 implementation under review; mini-PC acceptance pending)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
@@ -446,3 +447,24 @@ Do not redesign the existing Jellyfin TV folder-building algorithm in this chang
 - Include a Lexx-like multi-DVD fixture with repeated VTS_01_0.VOB / VTS_01_1.VOB names under different DVD directories and a non-colliding control file.
 - Assert that every playable input file has exactly one stable STRM and paired NFO, every STRM URL uses the corresponding TorrServer file_id, manifest records preserve every source_path, ordinary names remain unchanged, no component exceeds 255 bytes, and a repeated sync leaves paths unchanged.
 - [x] On the mini-PC (2026-10-22): installed v1.4.9 with configuration, output roots and manifests preserved; compile and 41 tests passed; dry-run showed collision resolution and no unresolved-collision guard errors; real sync completed; all 22 colliding Lexx STRM entries exist with unique filenames; a subsequent dry run reported 304 unchanged outputs; timer-triggered service run completed successfully and `torr2strm.timer` was restored to `active`/`enabled`.
+
+## 9. Informative Apprise collision summaries (v1.4.10)
+
+**Reason**
+
+The first live Apprise delivery on the mini-PC contained 22 `STRM_COLLISION_RESOLVED` warning bullets for the Lexx multi-DVD release, but those technical records did not include its release title. The separate `QUALITY_SKIP` critical message was easier to act on because it already contained the title.
+
+**Behavior**
+
+- Emit one `STRM_COLLISION_SUMMARY` warning for each torrent/output whose collision planner resolved one or more destination collisions. Include the release title, full torrent hash, affected-file count, count using short-hash suffixes, count escalated to the full hash, and representative source paths/file IDs.
+- Retain the existing per-file `STRM_COLLISION_RESOLVED` and `STRM_COLLISION_HASH_EXTENDED` warnings in the local journal so troubleshooting still has exact source and suffix detail.
+- Exclude those repetitive per-file records from Apprise aggregation when the summary is available; do not lose detailed diagnostics from systemd/journal logs.
+- Include the release title in `STRM_COLLISION_UNRESOLVED` critical logs as well.
+- Add regressions that verify the summary derives from real collision planning, carries the release title and example paths, and is what Apprise receives instead of 22 separate resolution bullets.
+- Keep notification fingerprint suppression, warning/error tags and the HTTP gateway contract unchanged. No media-tree, manifest or NFO schema change is required.
+
+**Acceptance**
+
+- [ ] CI confirms every test passes and the v1.4.10 release archive is generated.
+- [ ] On the mini-PC, verify an induced/test fixture collision summary includes the media title and relevant source paths, while per-file detail remains in the journal.
+- [ ] Confirm ordinary warning/critical messages continue reaching the existing Telegram topics and repeated unchanged collision events remain fingerprint-suppressed.
