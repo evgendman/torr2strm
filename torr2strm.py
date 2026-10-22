@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.8 - TorrServer-only STRM/NFO materialization.
+"""torr2strm 1.4.10 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
@@ -35,7 +35,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.9"
+VERSION = "1.4.10"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -2438,6 +2438,33 @@ class OutputRunner:
 
         planned_leaves, collision_levels = plan_strm_leaves(targets, snap.hash)
         file_by_id = {file.file_id: file for file, _, _ in targets}
+        if collision_levels:
+            short_hash_files = sum(1 for level in collision_levels.values() if level == 1)
+            full_hash_files = sum(1 for level in collision_levels.values() if level > 1)
+            files_by_source_name: dict[str, list[TorrentFile]] = {}
+            for file_id in sorted(collision_levels):
+                file = file_by_id[file_id]
+                files_by_source_name.setdefault(Path(file.path).name, []).append(file)
+            repeated_name_groups = [
+                sorted(group, key=lambda item: (item.path.casefold(), item.file_id))
+                for _, group in sorted(files_by_source_name.items(), key=lambda item: item[0].casefold())
+                if len(group) > 1
+            ]
+            if repeated_name_groups:
+                example_files = repeated_name_groups[0][:3]
+            else:
+                example_files = [file_by_id[file_id] for file_id in sorted(collision_levels)[:3]]
+            examples = ";".join(
+                f"file_id={item.file_id}:{item.path.replace(chr(10), ' ').replace(chr(13), ' ')}"
+                for item in example_files
+            )
+            LOG.warning(
+                "STRM_COLLISION_SUMMARY output=%s title=%r hash=%s affected_files=%d short_hash_files=%d full_hash_files=%d examples=%s",
+                self.spec.name, snap.title, snap.hash, len(collision_levels),
+                short_hash_files, full_hash_files, examples,
+            )
+
+        # Keep individual resolution details in the local journal, but send only the title-bearing summary through Apprise.
         for file_id, level in sorted(collision_levels.items()):
             file = file_by_id[file_id]
             if level == 1:
@@ -2465,7 +2492,7 @@ class OutputRunner:
             nfo_path = strm_path.with_suffix(".nfo")
             rel_nfo = nfo_path.relative_to(self.root).as_posix()
             if rel_strm in seen_destinations:
-                LOG.error("STRM_COLLISION_UNRESOLVED output=%s hash=%s destination=%s source=%s", self.spec.name, snap.hash, rel_strm, file.path)
+                LOG.error("STRM_COLLISION_UNRESOLVED output=%s title=%r hash=%s destination=%s source=%s", self.spec.name, snap.title, snap.hash, rel_strm, file.path)
                 raise RuntimeError(f"unresolved STRM destination collision: {rel_strm}")
             seen_destinations.add(rel_strm)
 
@@ -2996,7 +3023,7 @@ class NotificationCapture(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             message = record.getMessage()
-            if message.startswith("APPRISE_"):
+            if message.startswith(("APPRISE_", "STRM_COLLISION_RESOLVED ", "STRM_COLLISION_HASH_EXTENDED ")):
                 return
             if record.levelno >= logging.ERROR:
                 self.errors.append(message)
