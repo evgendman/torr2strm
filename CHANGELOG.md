@@ -1,7 +1,14 @@
 # Changelog
 
-## 1.4.9
+## 1.4.10
 
+- Make Apprise collision warnings actionable: each collision-bearing torrent now produces one summary with the release title, full hash, affected-file counts and representative source paths.
+- Keep detailed per-file STRM_COLLISION_RESOLVED / STRM_COLLISION_HASH_EXTENDED warnings in the local journal without repeating every file as a separate Apprise event.
+- Include the release title in STRM_COLLISION_UNRESOLVED critical logs and notification details.
+- Add regression coverage for summary content, example paths and suppression of duplicate per-file collision lines in Apprise.
+- No manifest/NFO schema changes or clean rebuild required.
+
+## 1.4.9
 - Resolve Jellyfin STRM destination collisions before writing files. Every participant receives a deterministic suffix containing the short torrent hash and TorrServer file ID; if a residual collision remains, retry with the full hash and file ID.
 - Leave ordinary Jellyfin filenames and the existing Season NN directory-generation behavior unchanged when no collision occurs. Do not infer episode numbers or interpret DVD/Blu-ray directory semantics.
 - Keep every generated STRM basename within the 255-byte filesystem-component limit including the .strm extension; keep NFO sidecars paired to the resolved STRM path.
