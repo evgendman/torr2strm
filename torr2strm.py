@@ -5,7 +5,7 @@ Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
 - No external indexer or metadata source is queried.
 - Missing or unsupported TorrServer category maps to _uncategorized; category is never guessed.
-- Usable ffprobe video dimensions take priority for the quality root; only when dimensions are unavailable can an explicit 4K/2160p release-title marker select the 4K root.
+- Quality root evidence priority: embedded video dimensions, recognized structured release quality/resolution, explicit 4K/2160p markers in the torrent title, then file paths, then 1080p default.
 - Jellyfin keeps its existing output layout; Kodi/Elementum keeps its normalized movie/TV tree and playback semantics.
 - Cached NFOs may be reused for exact-file streamdetails, but never determine category, quality root, or display quality label.
 - Only Jellyfin output may reverse-delete a TorrServer torrent, using action=rem only; never action=drop.
