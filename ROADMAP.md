@@ -418,11 +418,12 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8d — Publish the formal `v1.4.7` release/tag (published 2026-10-13; mini-PC acceptance passed 2026-10-14)
 - [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8; CI passed, mini-PC acceptance pending)
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
-- [ ] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 published; mini-PC acceptance pending)
+- [x] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 published and accepted on the mini-PC 2026-10-22; see delivery-verification note below)
+- [ ] Phase 14 — Decouple NFO content/schema versioning from the application release version. An application-version-only bump must not rewrite NFO files; an intentional `NFO_FORMAT_VERSION` change must invalidate/update NFOs. Add regression tests for both behaviors (identified 2026-10-22; implementation pending)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
-The v1.4.9 release is published and the collision fix is accepted on the reference mini-PC. The live sync completed successfully (`torrents=153 quality_ready=152 quality_unresolved=1 created=0 updated=154 unchanged=150 failed=1`); the one skipped item is the known Blu-ray ISO with no video files. The follow-up dry run reported `created=0 updated=0 unchanged=304 failed=1`, with no unresolved STRM collision. The timer was restored to `active` and `enabled`, and its immediate service run completed with `Result=success`, exit status 0 and 304 unchanged outputs. The service's configured TorrServer API is `127.0.0.1:8092`; a separate process also listens on 8097. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer remain available.
+The v1.4.9 release is published and the collision fix is accepted on the reference mini-PC. v1.4.10 is now also installed and accepted on the reference mini-PC as of 2026-10-22. The live sync completed successfully (`torrents=153 quality_ready=152 quality_unresolved=1 created=0 updated=154 unchanged=150 failed=1`); the one skipped item is the known Blu-ray ISO with no video files. The follow-up dry run reported `created=0 updated=0 unchanged=304 failed=1`, with no unresolved STRM collision. The timer was restored to `active` and `enabled`, and its immediate service run completed with `Result=success`, exit status 0 and 304 unchanged outputs. The service's configured TorrServer API is `127.0.0.1:8092`; a separate process also listens on 8097. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer remain available.
 
 
 ## 8. Collision-safe Jellyfin filenames (v1.4.9)
@@ -450,6 +451,8 @@ Do not redesign the existing Jellyfin TV folder-building algorithm in this chang
 
 ## 9. Informative Apprise collision summaries (v1.4.10)
 
+**Status: accepted on the reference mini-PC on 2026-10-22.**
+
 **Reason**
 
 The first live Apprise delivery on the mini-PC contained 22 `STRM_COLLISION_RESOLVED` warning bullets for the Lexx multi-DVD release, but those technical records did not include its release title. The separate `QUALITY_SKIP` critical message was easier to act on because it already contained the title.
@@ -466,5 +469,10 @@ The first live Apprise delivery on the mini-PC contained 22 `STRM_COLLISION_RESO
 **Acceptance**
 
 - [x] CI passed all 41 tests, and the official v1.4.10 release archive plus SHA256SUMS were published on 2026-10-22.
-- [ ] On the mini-PC, verify an induced/test fixture collision summary includes the media title and relevant source paths, while per-file detail remains in the journal.
-- [ ] Confirm ordinary warning/critical messages continue reaching the existing Telegram topics and repeated unchanged collision events remain fingerprint-suppressed.
+- [x] On the mini-PC, the v1.4.10 dry run emitted the title-bearing `STRM_COLLISION_SUMMARY` for Lexx with 22 affected files and representative source paths; the detailed 22 per-file entries remained in the local log.
+- [x] A direct test through the same Apprise gateway/config and `warnings` tag reached Telegram. The run log also recorded `APPRISE_SENT tag=warnings status=200`. The specific collision-summary message was not visually confirmed in Telegram during this check; the user accepted v1.4.10 and chose to proceed.
+- [x] Notification fingerprint suppression remains configured as before; no notification config or state was reset as part of this release.
+
+### Follow-up discovered during v1.4.10 acceptance
+
+The post-install dry run returned `created=0 updated=152 unchanged=152 failed=1` and logged `NFO_UPDATE` for 152 items. The NFO generator includes the application `VERSION` in the generated-file header, so the v1.4.10 version bump makes existing v1.4.9 NFO text compare unequal even though `NFO_FORMAT_VERSION` is still 3. The user accepts this one-time NFO rewrite during development and authorized starting the timer. This must be corrected as Phase 14: application version changes alone must not trigger NFO rewrites, while a deliberate NFO format-version change must.
