@@ -418,7 +418,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8d — Publish the formal `v1.4.7` release/tag (published 2026-10-13; mini-PC acceptance passed 2026-10-14)
 - [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8; CI passed, mini-PC acceptance pending)
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
-- [ ] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 implementation under review; mini-PC acceptance pending)
+- [ ] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 published; mini-PC acceptance pending)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
@@ -465,6 +465,6 @@ The first live Apprise delivery on the mini-PC contained 22 `STRM_COLLISION_RESO
 
 **Acceptance**
 
-- [ ] CI confirms every test passes and the v1.4.10 release archive is generated.
+- [x] CI passed all 41 tests, and the official v1.4.10 release archive plus SHA256SUMS were published on 2026-10-22.
 - [ ] On the mini-PC, verify an induced/test fixture collision summary includes the media title and relevant source paths, while per-file detail remains in the journal.
 - [ ] Confirm ordinary warning/critical messages continue reaching the existing Telegram topics and repeated unchanged collision events remain fingerprint-suppressed.
