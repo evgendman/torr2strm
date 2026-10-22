@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.8 is published; mini-PC acceptance remains pending.** The v1.4.8 mini-PC dry run exposed a Jellyfin STRM filename collision for multi-disc TV releases with repeated VOB basenames under different DVD directories: files were flattened into Season NN, and later files were skipped. v1.4.9 is scoped to deterministic collision resolution; the reference mini-PC timer remains stopped until the new version passes deployment checks.
+> **v1.4.9 is published and accepted on the reference mini-PC (2026-10-22).** The multi-disc Lexx VOB filename collisions are resolved using the short torrent hash plus exact TorrServer `file_id`; 22 unique Jellyfin STRM files were verified. The real sync and a follow-up dry run passed, with 304 outputs unchanged on the repeat run, and the systemd timer has been restored. One known `QUALITY_SKIP` remains for a Blu-ray ISO with no video files; this is separate from collision handling.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -419,14 +419,14 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8; CI passed, mini-PC acceptance pending)
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
-- [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation; mini-PC acceptance pending)
+- [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
-The v1.4.8 release is published, with mini-PC acceptance pending. Its dry run identified the repeated-basename collision described above. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer must remain available.
+The v1.4.9 release is published and the collision fix is accepted on the reference mini-PC. The live sync completed successfully (`torrents=153 quality_ready=152 quality_unresolved=1 created=0 updated=154 unchanged=150 failed=1`); the one skipped item is the known Blu-ray ISO with no video files. The follow-up dry run reported `created=0 updated=0 unchanged=304 failed=1`, with no unresolved STRM collision. The timer was restored to `active` and `enabled`, and its immediate service run completed with `Result=success`, exit status 0 and 304 unchanged outputs. The service's configured TorrServer API is `127.0.0.1:8092`; a separate process also listens on 8097. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer remain available.
 
 
 ## 8. Collision-safe Jellyfin filenames (v1.4.9)
 
-**Status: implementation and regression tests prepared; mini-PC acceptance pending.**
+**Status: completed and accepted on the reference mini-PC on 2026-10-22.** CI passed (41 tests); the installed release passed compile/version/source checks, the initial dry run and live sync, a repeat dry run, and a timer-triggered service run.
 
 ### Decision
 
@@ -445,4 +445,4 @@ Do not redesign the existing Jellyfin TV folder-building algorithm in this chang
 
 - Include a Lexx-like multi-DVD fixture with repeated VTS_01_0.VOB / VTS_01_1.VOB names under different DVD directories and a non-colliding control file.
 - Assert that every playable input file has exactly one stable STRM and paired NFO, every STRM URL uses the corresponding TorrServer file_id, manifest records preserve every source_path, ordinary names remain unchanged, no component exceeds 255 bytes, and a repeated sync leaves paths unchanged.
-- On the mini-PC, keep the timer stopped, install v1.4.9, run tests/compile and --dry-run, inspect collision-resolution logs and the unresolved-collision guard, and only then perform one real sync. Re-enable the timer only after reviewing the real output and confirming that all expected Lexx entries exist.
+- [x] On the mini-PC (2026-10-22): installed v1.4.9 with configuration, output roots and manifests preserved; compile and 41 tests passed; dry-run showed collision resolution and no unresolved-collision guard errors; real sync completed; all 22 colliding Lexx STRM entries exist with unique filenames; a subsequent dry run reported 304 unchanged outputs; timer-triggered service run completed successfully and `torr2strm.timer` was restored to `active`/`enabled`.
