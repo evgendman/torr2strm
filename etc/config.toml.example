@@ -49,7 +49,7 @@ level = "INFO"
 # Disabled until the gateway and arr-stack key are verified.
 [notifications]
 enabled = false
-apprise_url = "http://192.168.0.14:8000"
+apprise_url = "" # Set the actual shared Apprise API base URL before enabling notifications
 apprise_config_key = "arr-stack"
 service_name = "torr2strm / MINI-Ubuntu"
 timeout_sec = 5
