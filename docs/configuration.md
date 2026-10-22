@@ -58,7 +58,7 @@ Legacy [quality] timeout/retry keys and [jacred] configuration tables in existin
 | Parameter | Default | Meaning |
 |---|---|---|
 | enabled | false | Enable aggregated Apprise notifications. |
-| apprise_url | empty | Base URL of the shared Apprise API, e.g. `http://192.168.0.14:8000`; do not add `/notify/...`. |
+| apprise_url | empty | Base URL of the shared Apprise API, the actual shared Apprise API base URL; do not add `/notify/...`. |
 | apprise_config_key | arr-stack | Apprise API configuration key appended as `/notify/{key}`. |
 | service_name | torr2strm | Human-readable service label included in message titles/bodies. |
 | timeout_sec | 5 | Bounded notification HTTP timeout; valid range is 1–30 seconds. |
