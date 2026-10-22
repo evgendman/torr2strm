@@ -300,7 +300,7 @@ The mini-PC dry run for *The Prestige* produced a Kodi movie-directory component
 
 ### Phase 9 — Correct quality-root evidence precedence
 
-**Status: implemented in the v1.4.8 review branch; pending CI and mini-PC acceptance.**
+**Status: implemented in v1.4.8; CI passed, mini-PC acceptance pending.**
 
 **Reason**
 
@@ -361,7 +361,7 @@ Allow `torr2strm` to run either as a standalone synchronizer under its existing 
 
 ### Phase 11 — Isolate temporarily unavailable torrents and preserve their existing output
 
-**Status: implemented in the v1.4.8 review branch; pending CI and mini-PC acceptance.**
+**Status: implemented in v1.4.8; CI passed, mini-PC acceptance pending.**
 
 **Reason**
 
@@ -416,8 +416,8 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8b — Bound Kodi path components; 36 CI tests passed, including Windows/SMB and UTF-8 length regressions
 - [x] Phase 8c — Mini-PC clean rebuild/path acceptance and scheduled-operation verification: regenerated both output trees, bounded Prestige directory to 255 UTF-8 bytes, passed both path audits, enabled timer, and confirmed first timer-triggered run completed with 98 unchanged entries
 - [x] Phase 8d — Publish the formal `v1.4.7` release/tag (published 2026-10-13; mini-PC acceptance passed 2026-10-14)
-- [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8 review branch; pending validation)
+- [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8; CI passed, mini-PC acceptance pending)
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8 review branch; pending validation)
 
-The v1.4.7 release remains the published production baseline and is not rewritten. The v1.4.8 review branch implements Phase 9 quality-evidence precedence, Phase 11 resilient per-torrent metadata handling, and opt-in Apprise warning/error alerts; all remain pending automated validation and mini-PC acceptance. Phase 10 is intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer must remain available.
+The v1.4.7 release remains the published production baseline and is not rewritten. The v1.4.8 review branch implements Phase 9 quality-evidence precedence, Phase 11 resilient per-torrent metadata handling, and opt-in Apprise warning/error alerts; automated CI passed (39 tests); mini-PC acceptance remains pending. Phase 10 is intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer must remain available.
