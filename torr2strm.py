@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.7 - TorrServer-only STRM/NFO materialization.
+"""torr2strm 1.4.8 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
 - No external indexer or metadata source is queried.
 - Missing or unsupported TorrServer category maps to _uncategorized; category is never guessed.
-- Usable ffprobe video dimensions take priority for the quality root; only when dimensions are unavailable can an explicit 4K/2160p release-title marker select the 4K root.
+- Quality root evidence priority: embedded video dimensions, recognized structured release quality/resolution, explicit 4K/2160p markers in the torrent title, then file paths, then 1080p default.
 - Jellyfin keeps its existing output layout; Kodi/Elementum keeps its normalized movie/TV tree and playback semantics.
 - Cached NFOs may be reused for exact-file streamdetails, but never determine category, quality root, or display quality label.
 - Only Jellyfin output may reverse-delete a TorrServer torrent, using action=rem only; never action=drop.
@@ -35,7 +35,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.7"
+VERSION = "1.4.8"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -533,13 +533,28 @@ def quality_root_from_probe_payload(payload: Any) -> str:
     return quality_from_dimensions(*dimensions)
 
 
-def quality_root_from_probe_or_title(payload: Any, title: Any) -> str:
-    """Prefer usable technical dimensions; use an explicit 4K title marker only as fallback."""
+def has_explicit_4k_marker(value: Any) -> bool:
+    """Match standalone 4K/2160p markers without treating codec/source tokens as resolution."""
+    text = html.unescape(str(value or "")).lower()
+    return bool(re.search(r"(?<![a-z0-9])(?:4k|2160p)(?![a-z0-9])", text))
+
+
+def quality_root_from_probe_or_title(
+    payload: Any,
+    title: Any,
+    metadata: dict[str, Any] | None = None,
+    file_paths: tuple[str, ...] | list[str] = (),
+) -> str:
+    """Resolve quality from the strongest existing TorrServer evidence, without probing."""
     dimensions = quality_dimensions_from_probe_payload(payload)
     if dimensions is not None:
         return quality_from_dimensions(*dimensions)
-    release_title = html.unescape(str(title or "")).lower()
-    if re.search(r"(?<![a-z0-9])(?:4k|2160p)(?![a-z0-9])", release_title):
+    structured_labels = quality_labels_from_metadata(metadata)
+    if structured_labels:
+        return quality_root_from_label(structured_labels[0])
+    if has_explicit_4k_marker(title):
+        return "4K"
+    if any(has_explicit_4k_marker(path) for path in file_paths):
         return "4K"
     return "1080p"
 
@@ -1231,7 +1246,7 @@ class TorrServerClient:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             url, data=body, method="POST",
-            headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": "torr2strm/1.4.6"},
+            headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": f"torr2strm/{VERSION}"},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout if timeout is None else timeout) as resp:
@@ -1275,7 +1290,7 @@ class TorrServerClient:
         url = f"{self.base_url}/playlist?{query}"
         req = urllib.request.Request(
             url, method="GET",
-            headers={"Accept": "audio/x-mpegurl,text/plain,*/*", "User-Agent": "torr2strm/1.4.6"},
+            headers={"Accept": "audio/x-mpegurl,text/plain,*/*", "User-Agent": f"torr2strm/{VERSION}"},
         )
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as resp:
@@ -1565,17 +1580,22 @@ class MediaInfoResolver:
         if title_label:
             evidence.append(("release_title", title_label))
 
-        # Usable embedded video dimensions are authoritative. Only when dimensions
-        # cannot be read may an explicit 4K/2160p title marker select the 4K root.
+        # Root classification is separate from the display label. Priority:
+        # embedded dimensions, structured release quality, title marker, then file paths.
         quality_label = evidence[0][1] if evidence else None
         dimensions_available = quality_dimensions_from_probe_payload(snapshot_payload) is not None
-        quality_root = quality_root_from_probe_or_title(snapshot_payload, torrent.title)
+        structured_labels = quality_labels_from_metadata(torrent.metadata)
+        title_has_4k = has_explicit_4k_marker(torrent.title)
+        path_has_4k = any(has_explicit_4k_marker(file.path) for file in torrent.files)
+        quality_root = quality_root_from_probe_or_title(
+            snapshot_payload, torrent.title, torrent.metadata, [file.path for file in torrent.files]
+        )
         root_source = (
-            "torrserver_ffprobe_dimensions"
-            if dimensions_available
-            else "release_title_fallback"
-            if quality_root == "4K"
-            else "default_1080p"
+            "torrserver_ffprobe_dimensions" if dimensions_available else
+            "structured_torrent_quality" if structured_labels else
+            "release_title_fallback" if title_has_4k and quality_root == "4K" else
+            "release_path_fallback" if path_has_4k and quality_root == "4K" else
+            "default_1080p"
         )
         LOG.info(
             "QUALITY_ROOT hash=%s result=%s via=%s",
@@ -2494,7 +2514,8 @@ class OutputRunner:
                     break
                 parent = parent.parent
 
-    def run(self, snapshots: dict[str, TorrentSnapshot], old_manifest: dict[str, Any], media_by_hash: dict[str, dict[int, dict[str, Any]]], media_sources_by_hash: dict[str, dict[int, str]], cached_nfo_by_hash: dict[str, dict[int, str]], *, skip_hashes: set[str]) -> tuple[int, int, int, int]:
+    def run(self, snapshots: dict[str, TorrentSnapshot], old_manifest: dict[str, Any], media_by_hash: dict[str, dict[int, dict[str, Any]]], media_sources_by_hash: dict[str, dict[int, str]], cached_nfo_by_hash: dict[str, dict[int, str]], *, skip_hashes: set[str], deferred_hashes: set[str] | None = None) -> tuple[int, int, int, int]:
+        deferred_hashes = deferred_hashes or set()
         self.prepare_root()
         if self.spec.name == "kodi":
             self._prepare_kodi_components(snapshots)
@@ -2503,7 +2524,7 @@ class OutputRunner:
             raise RuntimeError(f"manifest.torrents must be object for output {self.spec.name}")
 
         for h, record in old_records.items():
-            if h not in snapshots:
+            if h not in snapshots and h not in deferred_hashes:
                 self._remove_stale(h, record, "torrent_missing_on_torrserver")
 
         new_manifest = {
@@ -2515,6 +2536,10 @@ class OutputRunner:
             "torrserver_url": self.client.base_url,
             "torrents": {},
         }
+        for h in deferred_hashes:
+            old = old_records.get(h)
+            if isinstance(old, dict):
+                new_manifest["torrents"][h] = old
         created = updated = unchanged = failed = 0
         for h in sorted(skip_hashes):
             old = old_records.get(h)
@@ -2580,63 +2605,94 @@ class SyncCoordinator:
         if not self.outputs:
             raise ValueError("at least one output must be enabled")
 
-    def _get_snapshot_list(self) -> list[TorrentSnapshot]:
+    def _get_snapshot_list(self) -> tuple[list[TorrentSnapshot], set[str]]:
+        """Isolate recoverable per-torrent source errors without misclassifying a deletion."""
         raw_list = self.client.list_torrents()
-        snapshots: list[TorrentSnapshot] = []
+        inventory: list[tuple[dict[str, Any], str]] = []
         for item in raw_list:
             if not isinstance(item, dict):
                 raise TorrServerError("TorrServer list contains a non-object item")
             raw_hash = get_field(item, "hash", default=None)
             if not isinstance(raw_hash, str) or not raw_hash.strip():
                 raise TorrServerError("TorrServer list item has no hash")
-            h = canonical_hash(raw_hash)
-            detail = extract_list_embedded_torrent(item)
-            if detail is not None:
-                merged = dict(item)
-                merged.update(detail)
+            inventory.append((item, canonical_hash(raw_hash)))
+
+        snapshots: list[TorrentSnapshot] = []
+        deferred_hashes: set[str] = set()
+        for item, h in inventory:
+            stage = "list_embedded_metadata"
+            try:
+                detail = extract_list_embedded_torrent(item)
+                if detail is not None:
+                    merged = dict(item)
+                    merged.update(detail)
+                    try:
+                        snapshots.append(parse_snapshot(merged, h))
+                        continue
+                    except ValueError as exc:
+                        LOG.warning(
+                            "LIST_EMBEDDED_METADATA_UNUSABLE hash=%s error=%s; falling back to action=get",
+                            h, str(exc).replace("\n", " ")[:400],
+                        )
+
+                stage = "action_get"
+                detail = self.client.get_torrent(h)
+                list_meta = parse_json_object(get_field(item, "data", default=None))
+                detail_meta = parse_json_object(get_field(detail, "data", default=None))
+                if list_meta:
+                    merged_meta = dict(list_meta)
+                    merged_meta.update({
+                        k: v for k, v in detail_meta.items()
+                        if v not in (None, "", 0, "null")
+                    })
+                    detail = dict(detail)
+                    detail["data"] = json.dumps(merged_meta, ensure_ascii=False)
+                if not get_field(detail, "title", "name", default=None):
+                    detail = dict(detail)
+                    detail["title"] = get_field(item, "title", "name", default="")
+                if not get_field(detail, "category", default=None):
+                    detail = dict(detail)
+                    detail["category"] = get_field(item, "category", default="")
+
+                stage = "snapshot_parse"
                 try:
-                    snapshots.append(parse_snapshot(merged, h))
+                    snapshots.append(parse_snapshot(detail, h))
                     continue
                 except ValueError as exc:
-                    LOG.warning("list embedded metadata unusable hash=%s error=%s; falling back to action=get", h, exc)
-            detail = self.client.get_torrent(h)
-            list_meta = parse_json_object(get_field(item, "data", default=None))
-            detail_meta = parse_json_object(get_field(detail, "data", default=None))
-            if list_meta:
-                merged_meta = dict(list_meta)
-                merged_meta.update({k: v for k, v in detail_meta.items() if v not in (None, "", 0, "null")})
-                detail = dict(detail)
-                detail["data"] = json.dumps(merged_meta, ensure_ascii=False)
-            if not get_field(detail, "title", "name", default=None):
-                detail = dict(detail); detail["title"] = get_field(item, "title", "name", default="")
-            if not get_field(detail, "category", default=None):
-                detail = dict(detail); detail["category"] = get_field(item, "category", default="")
-            try:
-                snapshots.append(parse_snapshot(detail, h))
-                continue
-            except ValueError as exc:
-                if "FileStats absent/empty" not in str(exc):
-                    raise
-                LOG.info("METADATA_LOAD hash=%s reason=file_stats_absent", h)
-            self.client.load_torrent_metadata(h)
-            deadline = time.monotonic() + self.cfg["torrserver"]["metadata_wait_sec"]
-            last_detail: dict[str, Any] | None = None
-            last_error: Exception | None = None
-            while True:
-                try:
-                    refreshed = self.client.get_torrent(h)
-                    last_detail = refreshed
-                    snapshots.append(parse_snapshot(refreshed, h))
-                    LOG.info("METADATA_READY hash=%s", h)
-                    break
-                except ValueError as exc:
-                    last_error = exc
                     if "FileStats absent/empty" not in str(exc):
                         raise
-                if time.monotonic() >= deadline:
-                    raise RuntimeError(f"torrent {h}: FileStats still absent after metadata load: {last_error}")
-                time.sleep(self.cfg["torrserver"]["metadata_poll_sec"])
-        return snapshots
+                    LOG.info("METADATA_LOAD hash=%s reason=file_stats_absent", h)
+
+                stage = "metadata_load"
+                self.client.load_torrent_metadata(h)
+                deadline = time.monotonic() + self.cfg["torrserver"]["metadata_wait_sec"]
+                last_error: Exception | None = None
+                while True:
+                    stage = "metadata_wait"
+                    try:
+                        refreshed = self.client.get_torrent(h)
+                        snapshots.append(parse_snapshot(refreshed, h))
+                        LOG.info("METADATA_READY hash=%s", h)
+                        break
+                    except ValueError as exc:
+                        last_error = exc
+                        if "FileStats absent/empty" not in str(exc):
+                            raise
+                    except Exception as exc:
+                        last_error = exc
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(
+                            f"FileStats/metadata still unavailable after metadata load: {last_error}"
+                        ) from last_error
+                    time.sleep(self.cfg["torrserver"]["metadata_poll_sec"])
+            except Exception as exc:
+                deferred_hashes.add(h)
+                reason = str(exc).replace("\n", " ").strip()[:500] or type(exc).__name__
+                LOG.warning(
+                    "TORRENT_DEFERRED hash=%s stage=%s reason=%s retry=next_run",
+                    h, stage, reason,
+                )
+        return snapshots, deferred_hashes
 
     def _collect_required_files(self, snap: TorrentSnapshot) -> set[int]:
         videos = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
@@ -2660,7 +2716,7 @@ class SyncCoordinator:
         manifests = [(o.root, o.load_manifest()) for o in self.outputs]
         old_by_output = {o.spec.name: manifest for o, (_, manifest) in zip(self.outputs, manifests)}
 
-        raw_snapshots = self._get_snapshot_list()
+        raw_snapshots, deferred_hashes = self._get_snapshot_list()
         snapshot_map: dict[str, TorrentSnapshot] = {s.hash: s for s in raw_snapshots}
 
         # Category, metadata, IDs and magnets remain those already present on
@@ -2691,7 +2747,7 @@ class SyncCoordinator:
             quality_ready[h] = replace(snap, quality=quality, quality_label=quality_label)
 
         removed_hashes: set[str] = set()
-        totals = {"created": 0, "updated": 0, "unchanged": 0, "failed": unresolved}
+        totals = {"created": 0, "updated": 0, "unchanged": 0, "failed": unresolved + len(deferred_hashes)}
         # Jellyfin is authoritative for reverse deletion and is intentionally processed first.
         ordered_outputs = sorted(self.outputs, key=lambda o: 0 if o.spec.name == "jellyfin" else 1)
         for output in ordered_outputs:
@@ -2702,6 +2758,7 @@ class SyncCoordinator:
                 media_sources_by_hash,
                 cached_nfo_by_hash,
                 skip_hashes=removed_hashes,
+                deferred_hashes=deferred_hashes,
             )
             totals["created"] += created
             totals["updated"] += updated
@@ -2713,7 +2770,7 @@ class SyncCoordinator:
         elapsed = time.monotonic() - started
         LOG.info(
             "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d nfo_reused=%d outputs=%s elapsed=%.2fs",
-            len(snapshot_map), len(quality_ready), unresolved, totals["created"], totals["updated"], totals["unchanged"], totals["failed"],
+            len(snapshot_map) + len(deferred_hashes), len(quality_ready), unresolved + len(deferred_hashes), totals["created"], totals["updated"], totals["unchanged"], totals["failed"],
             resolver.stats["nfo_reused"], enabled_names, elapsed,
         )
         return 0
@@ -2776,6 +2833,28 @@ def load_config(path: Path) -> dict[str, Any]:
             "max_torrent_removals_per_run": max_removals if name == "jellyfin" else 0,
         }
 
+    notifications = raw.get("notifications", {})
+    if not isinstance(notifications, dict):
+        raise ValueError("[notifications] must be a table")
+    notify_enabled = bool(notifications.get("enabled", False))
+    apprise_url = str(notifications.get("apprise_url", "")).strip().rstrip("/")
+    apprise_config_key = str(notifications.get("apprise_config_key", "arr-stack")).strip()
+    service_name = str(notifications.get("service_name", "torr2strm")).strip() or "torr2strm"
+    notify_timeout = int(notifications.get("timeout_sec", 5))
+    tag_warning = str(notifications.get("tag_warning", "warnings")).strip()
+    tag_critical = str(notifications.get("tag_critical", "critical")).strip()
+    state_path = str(notifications.get("state_path", "/var/lib/torr2strm/notification_state.json")).strip()
+    if notify_enabled:
+        if not apprise_url.startswith(("http://", "https://")):
+            raise ValueError("[notifications].apprise_url must start with http:// or https:// when enabled")
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", apprise_config_key):
+            raise ValueError("[notifications].apprise_config_key must contain only letters, digits, '_' or '-'")
+        if not tag_warning or not tag_critical:
+            raise ValueError("[notifications].tag_warning and tag_critical must not be empty")
+        if not 1 <= notify_timeout <= 30:
+            raise ValueError("[notifications].timeout_sec must be between 1 and 30")
+        if not state_path:
+            raise ValueError("[notifications].state_path must not be empty")
     return {
         "torrserver": {
             "url": url,
@@ -2789,6 +2868,16 @@ def load_config(path: Path) -> dict[str, Any]:
             "tv_unmatched_season": int(sync.get("tv_unmatched_season", 0)),
             "video_extensions": normalized_extensions,
         },
+        "notifications": {
+            "enabled": notify_enabled,
+            "apprise_url": apprise_url,
+            "apprise_config_key": apprise_config_key,
+            "service_name": service_name,
+            "timeout_sec": notify_timeout,
+            "tag_warning": tag_warning,
+            "tag_critical": tag_critical,
+            "state_path": str(Path(state_path).expanduser()),
+        },
         "logging": {"level": str(logging_cfg.get("level", "INFO")).upper()},
     }
 
@@ -2797,28 +2886,119 @@ def setup_logging(level: str) -> None:
     logging.basicConfig(level=getattr(logging, level, logging.INFO), format="%(asctime)s %(levelname)s %(message)s")
 
 
+class NotificationCapture(logging.Handler):
+    """Collect warning/error records for aggregated Apprise messages."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.warnings: list[str] = []
+        self.errors: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+            if message.startswith("APPRISE_"):
+                return
+            if record.levelno >= logging.ERROR:
+                self.errors.append(message)
+            elif record.levelno >= logging.WARNING:
+                self.warnings.append(message)
+        except Exception:
+            self.handleError(record)
+
+
+def _notification_events(values: list[str]) -> list[str]:
+    return sorted({str(v).replace("\r", " ").replace("\n", " ").strip()[:500] for v in values if str(v).strip()})
+
+
+def apprise_notify(config: dict[str, Any], *, title: str, body: str, notify_type: str, tag: str) -> bool:
+    endpoint = config["apprise_url"].rstrip("/") + "/notify/" + urllib.parse.quote(config["apprise_config_key"], safe="")
+    payload = json.dumps({"title": title, "body": body[:3500], "type": notify_type, "tag": tag}, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint, data=payload, method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json", "User-Agent": f"torr2strm/{VERSION}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=config["timeout_sec"]) as response:
+            status = int(getattr(response, "status", 200))
+        LOG.info("APPRISE_SENT tag=%s status=%d", tag, status)
+        return 200 <= status < 300
+    except urllib.error.HTTPError as exc:
+        LOG.warning("APPRISE_FAILED tag=%s http_status=%d", tag, exc.code)
+    except urllib.error.URLError as exc:
+        LOG.warning("APPRISE_FAILED tag=%s error_type=%s", tag, type(exc.reason).__name__)
+    except Exception as exc:
+        LOG.warning("APPRISE_FAILED tag=%s error_type=%s", tag, type(exc).__name__)
+    return False
+
+
+def dispatch_run_notifications(cfg: dict[str, Any], capture: NotificationCapture) -> None:
+    config = cfg.get("notifications", {})
+    if not isinstance(config, dict) or not config.get("enabled"):
+        return
+    current = {"warnings": _notification_events(capture.warnings), "errors": _notification_events(capture.errors)}
+    state_path = Path(config["state_path"])
+    state: dict[str, Any] = {}
+    try:
+        loaded = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            state = loaded
+    except FileNotFoundError:
+        pass
+    except Exception as exc:
+        LOG.warning("APPRISE_STATE_READ_FAILED error_type=%s", type(exc).__name__)
+
+    service_name = str(config["service_name"])
+    for category, kind, tag in (
+        ("warnings", "warning", config["tag_warning"]),
+        ("errors", "failure", config["tag_critical"]),
+    ):
+        events = current[category]
+        fingerprint = sha256_text(json.dumps(events, ensure_ascii=False, separators=(",", ":"))) if events else ""
+        if events and fingerprint != str(state.get(category, "")):
+            visible = events[:15]
+            body = f"Service: {service_name}\nSeverity: {category}\nDistinct events: {len(events)}\n\n"
+            body += "\n".join(f"- {event}" for event in visible)
+            if len(events) > len(visible):
+                body += f"\n- … and {len(events) - len(visible)} additional distinct events"
+            apprise_notify(config, title=f"{service_name}: {category}", body=body, notify_type=kind, tag=tag)
+        state[category] = fingerprint
+    try:
+        atomic_write_text(state_path, json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n", mode=0o600)
+    except Exception as exc:
+        LOG.warning("APPRISE_STATE_WRITE_FAILED error_type=%s", type(exc).__name__)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="TorrServer -> multi-output STRM synchronizer")
     parser.add_argument("--config", default="/etc/torr2strm/config.toml")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--version", action="version", version=VERSION)
+    cfg: dict[str, Any] | None = None
+    capture: NotificationCapture | None = None
     try:
         args = parser.parse_args()
         cfg = load_config(Path(args.config))
         setup_logging(cfg["logging"]["level"])
-        client = TorrServerClient(
-            cfg["torrserver"]["url"],
-            cfg["torrserver"]["timeout_sec"],
-            cfg["torrserver"]["remove_timeout_sec"],
-        )
+        capture = NotificationCapture()
+        LOG.addHandler(capture)
+        client = TorrServerClient(cfg["torrserver"]["url"], cfg["torrserver"]["timeout_sec"], cfg["torrserver"]["remove_timeout_sec"])
         return SyncCoordinator(cfg, client, dry_run=args.dry_run).run()
     except KeyboardInterrupt:
+        LOG.warning("INTERRUPTED synchronization cancelled")
         return 130
     except Exception as exc:
         if not logging.getLogger().handlers:
             logging.basicConfig(level=logging.ERROR, format="%(asctime)s %(levelname)s %(message)s")
         LOG.exception("FATAL %s", exc)
         return 1
+    finally:
+        if cfg is not None and capture is not None:
+            try:
+                dispatch_run_notifications(cfg, capture)
+            except Exception as exc:
+                LOG.warning("APPRISE_DISPATCH_FAILED error_type=%s", type(exc).__name__)
+            LOG.removeHandler(capture)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 Production file: `/etc/torr2strm/config.toml`.
 Example shipped with the repository: [`etc/config.toml.example`](../etc/config.toml.example).
 
-`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.7 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
+`torr2strm` reads one TOML file at startup. Unknown tables such as a legacy `[jacred]` section are ignored; v1.4.8 has no external-source settings or network lookup flags. Unknown keys do not provide additional features unless the program explicitly reads them.
 
 ## Complete parameter map
 
@@ -42,14 +42,31 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 
 - Category comes only from the category field already present in TorrServer. Missing, blank, or unsupported values remain _uncategorized.
 - Usable ffprobe video dimensions already embedded in TorrServer metadata take priority: a maximum dimension of at least 3840 selects `4K`; lower dimensions select `1080p`.
-- Only when usable dimensions are missing, invalid, or absent may an explicit `4K` or `2160p` marker in the TorrServer title select the `4K` root. Usable lower-resolution dimensions always override title markers.
-- Structured quality fields influence the visible basename label but do not independently select the root.
+- If usable dimensions are unavailable, recognized structured quality/resolution fields describing the release determine the root; a recognized lower resolution selects `1080p` and outranks conflicting title/path text.
+- If structured resolution is unavailable, a standalone `4K`/`2160p` marker in the TorrServer title selects `4K`; explicit release markers in file paths are the next fallback. Token boundaries prevent partial matches.
+- Only if no higher-priority evidence is usable does the root default to `1080p`. Import route/provenance (including the Sonarr-1080 instance), codec and source labels are never resolution evidence.
+- Root classification remains separate from the displayed basename quality label.
 - Cached NFOs may be reused for exact-file streamdetails only; they do not affect category, root, or display label.
 - No local ffprobe is run, TorrServer `/ffp/` is never called, and no JacRed, Prowlarr, or other external-source requests are made.
 
 For Kodi TV, an identified series receives one root-level `tvshow.nfo`; season folders and episode STRMs do not get NFO sidecars. Jellyfin's existing per-item NFO output and Kodi movie NFO behavior are unchanged.
 
-Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.7 and can be removed.
+Legacy [quality] timeout/retry keys and [jacred] configuration tables in existing config files are ignored by v1.4.8 and can be removed.
+
+### [notifications]
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| enabled | false | Enable aggregated Apprise notifications. |
+| apprise_url | empty | Base URL of the shared Apprise API, the actual shared Apprise API base URL; do not add `/notify/...`. |
+| apprise_config_key | arr-stack | Apprise API configuration key appended as `/notify/{key}`. |
+| service_name | torr2strm | Human-readable service label included in message titles/bodies. |
+| timeout_sec | 5 | Bounded notification HTTP timeout; valid range is 1–30 seconds. |
+| tag_warning | warnings | Apprise tag for warning events. |
+| tag_critical | critical | Apprise tag for error events. |
+| state_path | /var/lib/torr2strm/notification_state.json | Persistent warning/error fingerprints, separate from media manifests and TorrServer state. |
+
+The API contract is `POST {apprise_url}/notify/{apprise_config_key}` with JSON fields `title`, `body`, `type`, and `tag`. Warnings use type `warning` and tag `warnings`; errors use type `failure` and tag `critical`. Telegram credentials and topic IDs stay in the shared gateway. Events are aggregated by severity; unchanged fingerprints are not resent on every timer run, and a clean cycle resets the fingerprint. Delivery failures are logged but never fail synchronization.
 
 ### `[logging]`
 

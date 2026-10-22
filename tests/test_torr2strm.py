@@ -1,4 +1,5 @@
 import json
+import logging
 import tempfile
 from pathlib import Path
 import sys
@@ -6,8 +7,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import torr2strm as torr2strm_module
 from torr2strm import (
     MediaInfoResolver,
+    NotificationCapture,
+    dispatch_run_notifications,
     OutputRunner,
     OutputSpec,
     SyncCoordinator,
@@ -99,6 +103,16 @@ def cfg(jelly_root, kodi_root, remove=False):
             "video_extensions": {".mkv", ".mp4"},
         },
         "quality": {"timeout_sec": 2, "retries": 0},
+        "notifications": {
+            "enabled": False,
+            "apprise_url": "",
+            "apprise_config_key": "arr-stack",
+            "service_name": "torr2strm test",
+            "timeout_sec": 5,
+            "tag_warning": "warnings",
+            "tag_critical": "critical",
+            "state_path": str(Path(jelly_root).parent / "notification_state.json"),
+        },
         "logging": {"level": "ERROR"},
     }
 
@@ -481,10 +495,10 @@ def test_missing_or_unsupported_torrserver_category_stays_uncategorized_without_
         with patch("torr2strm.urllib.request.urlopen", side_effect=AssertionError("unexpected HTTP request")):
             assert run(cfg(jr, kr), client) == 0
         for root in (jr, kr):
-            # Category remains _uncategorized, while the explicit 2160p title
-            # marker independently selects the 4K quality root.
-            assert len(list((root / "_uncategorized" / "1080p").rglob("*.strm"))) == 1
-            assert len(list((root / "_uncategorized" / "4K").rglob("*.strm"))) == 1
+            # Unsupported/missing category stays _uncategorized. Both items have
+            # recognized structured 2160p metadata, which outranks title/path hints.
+            assert len(list((root / "_uncategorized" / "1080p").rglob("*.strm"))) == 0
+            assert len(list((root / "_uncategorized" / "4K").rglob("*.strm"))) == 2
             assert not (root / "movie").exists()
             assert not (root / "tv").exists()
 
@@ -658,7 +672,7 @@ def test_kodi_shared_series_directory_cleanup_preserves_other_release():
         assert (kr / "tv" / "1080p" / "Shared Show (2020)" / "tvshow.nfo").is_file()
 
 
-def test_explicit_4k_title_fallback_can_select_root_even_when_label_is_structured():
+def test_structured_lower_resolution_overrides_explicit_4k_title_fallback():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr, kr = base / "jelly", base / "kodi"
@@ -666,7 +680,7 @@ def test_explicit_4k_title_fallback_can_select_root_even_when_label_is_structure
         t = torrent(h=h, title="Film.2160p.HDR", category="movie", data={"quality": "720p"})
         client = FakeClient([t], probes={})
         assert run(cfg(jr, kr), client) == 0
-        kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
+        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
         assert "720p" in kodi_strm.name
         assert "2160p" not in kodi_strm.name
         assert client.ffprobe_calls == []
@@ -949,6 +963,25 @@ def test_quality_root_uses_usable_dimensions_before_explicit_title_fallback():
     assert quality_root_from_probe_or_title(probe(3840, 2160), "Film 1080p") == "4K"
 
 
+
+def test_quality_root_evidence_precedence_includes_structured_metadata_and_file_paths():
+    assert quality_root_from_probe_or_title(
+        probe(1920, 1080), "Film 2160p", {"quality": "2160p"}, ["release 4K.mkv"]
+    ) == "1080p"
+    assert quality_root_from_probe_or_title(
+        probe(3840, 2160), "Film 1080p", {"quality": "1080p"}, []
+    ) == "4K"
+    assert quality_root_from_probe_or_title(
+        None, "Film 2160p", {"resolution": "1080"}, ["folder/Film 4K.mkv"]
+    ) == "1080p"
+    assert quality_root_from_probe_or_title(None, "Film", {"quality": "2160"}, []) == "4K"
+    assert quality_root_from_probe_or_title(
+        None, "Release without a marker", {}, ["season/Film_2160p_WEB-DL.mkv"]
+    ) == "4K"
+    assert quality_root_from_probe_or_title(None, "Film 2160pixels", {}, []) == "1080p"
+    assert quality_root_from_probe_or_title(None, "Film", {}, ["Film.2160pish.mkv"]) == "1080p"
+    assert quality_root_from_probe_or_title(None, "Film without quality", {}, []) == "1080p"
+
 def test_torr2strm_does_not_request_ffprobe_from_torrserver():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
@@ -962,3 +995,92 @@ def test_torr2strm_does_not_request_ffprobe_from_torrserver():
         assert not list((jr / "movie" / "4K").rglob("*.strm"))
 
 
+
+def test_deferred_torrent_preserves_previous_trees_while_healthy_items_continue():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        bad_hash, healthy_hash = "a" * 40, "b" * 40
+        bad = torrent(h=bad_hash, title="Temporarily unreadable film", data={})
+        healthy = torrent(h=healthy_hash, title="Healthy film", data={})
+        assert run(cfg(jr, kr), FakeClient([bad, healthy])) == 0
+
+        jelly_manifest = jr / ".torr2strm" / "manifest.json"
+        kodi_manifest = kr / ".torr2strm" / "manifest.json"
+        before_jelly = json.loads(jelly_manifest.read_text(encoding="utf-8"))["torrents"]
+        before_kodi = json.loads(kodi_manifest.read_text(encoding="utf-8"))["torrents"]
+        bad_jelly_record, bad_kodi_record = before_jelly[bad_hash], before_kodi[bad_hash]
+        bad_jelly_files = {rel: (jr / rel).read_bytes() for rel in bad_jelly_record["files"]}
+        bad_kodi_files = {rel: (kr / rel).read_bytes() for rel in bad_kodi_record["files"]}
+
+        bad_current = torrent(h=bad_hash, title="Temporarily unreadable film", data={})
+        healthy_current = torrent(h=healthy_hash, title="Healthy film — updated", data={})
+        class OneTorrentUnavailable(FakeClient):
+            def get_torrent(self, h):
+                if h == bad_hash:
+                    raise RuntimeError("temporary TorrServer detail timeout")
+                return super().get_torrent(h)
+
+        assert run(cfg(jr, kr), OneTorrentUnavailable([bad_current, healthy_current])) == 0
+        after_jelly = json.loads(jelly_manifest.read_text(encoding="utf-8"))["torrents"]
+        after_kodi = json.loads(kodi_manifest.read_text(encoding="utf-8"))["torrents"]
+        assert after_jelly[bad_hash] == bad_jelly_record
+        assert after_kodi[bad_hash] == bad_kodi_record
+        for rel, content in bad_jelly_files.items():
+            assert (jr / rel).read_bytes() == content
+        for rel, content in bad_kodi_files.items():
+            assert (kr / rel).read_bytes() == content
+        assert after_jelly[healthy_hash]["directory"] != before_jelly[healthy_hash]["directory"]
+        assert after_kodi[healthy_hash]["directory"] != before_kodi[healthy_hash]["directory"]
+
+
+def test_apprise_notifications_use_shared_contract_and_suppress_unchanged_events():
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg_data = cfg(base / "jelly", base / "kodi")
+        cfg_data["notifications"].update({
+            "enabled": True,
+            "apprise_url": "http://192.168.0.14:8000",
+            "apprise_config_key": "arr-stack",
+            "service_name": "torr2strm / MINI-Ubuntu",
+            "state_path": str(base / "notifications.json"),
+        })
+        capture = NotificationCapture()
+        warning = logging.LogRecord(
+            "torr2strm", logging.WARNING, __file__, 1,
+            "TORRENT_DEFERRED hash=%s stage=%s reason=%s retry=next_run",
+            ("a" * 40, "metadata_wait", "FileStats temporarily unavailable"), None,
+        )
+        error = logging.LogRecord(
+            "torr2strm", logging.ERROR, __file__, 2,
+            "ERROR output=%s hash=%s operation=%s",
+            ("jellyfin", "b" * 40, "sync"), None,
+        )
+        capture.emit(warning)
+        capture.emit(error)
+        with patch.object(torr2strm_module.urllib.request, "urlopen", return_value=Response()) as urlopen:
+            dispatch_run_notifications(cfg_data, capture)
+            assert urlopen.call_count == 2
+            requests = [call.args[0] for call in urlopen.call_args_list]
+            payloads = [json.loads(req.data.decode("utf-8")) for req in requests]
+            assert all(req.full_url == "http://192.168.0.14:8000/notify/arr-stack" for req in requests)
+            warning_payload = next(p for p in payloads if p["type"] == "warning")
+            error_payload = next(p for p in payloads if p["type"] == "failure")
+            assert warning_payload["tag"] == "warnings"
+            assert "TORRENT_DEFERRED" in warning_payload["body"]
+            assert error_payload["tag"] == "critical"
+            assert "ERROR output=jellyfin" in error_payload["body"]
+            dispatch_run_notifications(cfg_data, capture)
+            assert urlopen.call_count == 2
+            dispatch_run_notifications(cfg_data, NotificationCapture())
+            capture_again = NotificationCapture()
+            capture_again.emit(warning)
+            dispatch_run_notifications(cfg_data, capture_again)
+            assert urlopen.call_count == 3
