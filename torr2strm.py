@@ -1503,7 +1503,7 @@ def plan_strm_leaves(
     return leaves, collision_levels
 
 
-def atomic_write_text(path: Path, content: str, mode: int = 0o666) -> None
+def atomic_write_text(path: Path, content: str, mode: int = 0o666) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # A long final filename cannot be reused as the tempfile prefix: the
     # additional random suffix can push the temporary basename past NAME_MAX.
