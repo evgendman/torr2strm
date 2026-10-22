@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.8 (review branch; pending CI and mini-PC validation)
+## 1.4.8 (CI passed; mini-PC acceptance pending)
 
 - Complete quality-root evidence precedence: embedded video dimensions, recognized structured TorrServer resolution fields, explicit 4K/2160p markers in the torrent title, then file paths, then the 1080p fallback.
 - Isolate per-torrent metadata/FileStats failures. Preserve prior Jellyfin/Kodi outputs and manifest records for deferred hashes while continuing to synchronize healthy torrents; retry on the next run.
