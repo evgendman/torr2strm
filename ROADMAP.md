@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.7 candidate: implementation, CI, clean-rebuild/path acceptance, and timer-triggered operation verified.** GitHub Actions passed 36 tests at commit `387696cde4eb9682a231eb4d893b6c5344981a95`. On 2026-10-14, the mini-PC installed that exact commit and completed a clean rebuild/synchronization across 50 TorrServer torrents: `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, `failed=1`. The sole logged skip was the expected `QUALITY_SKIP: no video files` for a Blu-ray ISO; no other synchronization errors were found. The output audit counted Jellyfin 663 STRM/694 NFO and Kodi 561 STRM/32 NFO; every audited path component in both trees was at most 255 UTF-8 bytes. The Prestige Kodi directory is 255 bytes and Kodi Windows/SMB component checks passed. On 2026-10-14, `torr2strm.timer` was enabled and the first timer-triggered run completed successfully: `created=0`, `updated=0`, `unchanged=98`, `failed=1` (the same expected Blu-ray ISO skip). The timer was `enabled` and `active`; the next run was scheduled for 20:16:31 (+05:00). The candidate is accepted for ordinary scheduled synchronization; the formal release tag has not been published. Phase 9 remains a separate follow-up and is not part of v1.4.7.
+> **v1.4.7 is published and accepted for ordinary scheduled operation.** The official GitHub release/tag was published on 2026-10-13; GitHub Actions passed 36 tests at commit `387696cde4eb9682a231eb4d893b6c5344981a95`. On 2026-10-14, the mini-PC installed that exact commit and completed a clean rebuild/synchronization across 50 TorrServer torrents: `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, `failed=1`. The sole logged skip was the expected `QUALITY_SKIP: no video files` for a Blu-ray ISO; no other synchronization errors were found. Both generated trees passed the path audit (all components at most 255 UTF-8 bytes), Windows/SMB checks passed, and the first timer-triggered run completed with 98 unchanged entries. Follow-up work is being prepared as v1.4.8; Phase 10 (torr2jellyfin integration) is intentionally deferred.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -300,7 +300,7 @@ The mini-PC dry run for *The Prestige* produced a Kodi movie-directory component
 
 ### Phase 9 — Correct quality-root evidence precedence
 
-**Status: agreed follow-up for the next implementation version; not included in v1.4.7.**
+**Status: implemented in the v1.4.8 review branch; pending CI and mini-PC acceptance.**
 
 **Reason**
 
@@ -329,7 +329,7 @@ Mini-PC dry-run validation showed releases whose torrent/file paths contain expl
 
 ### Phase 10 — Backward-compatible orchestration and run reports for torr2jellyfin
 
-**Status: planned integration work; not implemented in v1.4.7.** This phase must not change or remove the existing standalone workflow.
+**Status: deferred by decision; explicitly excluded from v1.4.8.** This phase must not change or remove the existing standalone workflow.
 
 **Goal**
 
@@ -361,7 +361,7 @@ Allow `torr2strm` to run either as a standalone synchronizer under its existing 
 
 ### Phase 11 — Isolate temporarily unavailable torrents and preserve their existing output
 
-**Status: planned resilience improvement; not implemented in v1.4.7.**
+**Status: implemented in the v1.4.8 review branch; pending CI and mini-PC acceptance.**
 
 **Reason**
 
@@ -415,9 +415,9 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8a — Implement the 4K title-marker fallback and Kodi TV root-only NFO policy; GitHub Actions passed (33 tests)
 - [x] Phase 8b — Bound Kodi path components; 36 CI tests passed, including Windows/SMB and UTF-8 length regressions
 - [x] Phase 8c — Mini-PC clean rebuild/path acceptance and scheduled-operation verification: regenerated both output trees, bounded Prestige directory to 255 UTF-8 bytes, passed both path audits, enabled timer, and confirmed first timer-triggered run completed with 98 unchanged entries
-- [ ] Phase 8d — Publish the formal `v1.4.7` release tag only after Phase 8b and Phase 8c pass
-- [ ] Phase 9 — Implement expanded quality-root evidence precedence in a subsequent version after v1.4.7 acceptance
-- [ ] Phase 10 — Add backward-compatible orchestration/check/report interface for torr2jellyfin while preserving standalone CLI and timer operation
-- [ ] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents
+- [x] Phase 8d — Publish the formal `v1.4.7` release/tag (published 2026-10-13; mini-PC acceptance passed 2026-10-14)
+- [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8 review branch; pending validation)
+- [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
+- [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8 review branch; pending validation)
 
-The v1.4.6 implementation remains the historical validated baseline. The v1.4.7 candidate on `main` has passed the 36-test GitHub Actions run, mini-PC clean-rebuild/path acceptance, and first timer-triggered synchronization recorded above; it is accepted for ordinary scheduled operation. The timer is enabled on the validated mini-PC. The formal `v1.4.7` release tag has not yet been published. Phases 9, 10, and 11 are separate follow-ups and must not be mistaken for behavior already implemented in v1.4.7.
+The v1.4.7 release remains the published production baseline and is not rewritten. The v1.4.8 review branch implements Phase 9 quality-evidence precedence, Phase 11 resilient per-torrent metadata handling, and opt-in Apprise warning/error alerts; all remain pending automated validation and mini-PC acceptance. Phase 10 is intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer must remain available.
