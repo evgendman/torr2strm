@@ -1,4 +1,4 @@
-# torr2strm v1.4.7
+# torr2strm v1.4.8
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -62,7 +62,7 @@ Manifest state is never copied between roots.
 
 Category is taken only from the category field already present in TorrServer. Supported movie and tv values are preserved. Missing, blank, or unsupported values—including anime—go to _uncategorized. Category is never guessed from title, filename, or external lookup.
 
-The two quality roots are `4K` and `1080p`. Usable video dimensions already embedded in TorrServer metadata take priority: a maximum dimension of at least 3840 pixels selects `4K`, while lower usable dimensions select `1080p`. Only when usable dimensions are unavailable may a clear `4K` or `2160p` marker in the release title select the `4K` root. Title markers never override usable non-4K dimensions. Structured quality fields do not select the root. Cached NFOs may preserve stream details for an exact source file, but do not determine category, root, or display label.
+The two quality roots are `4K` and `1080p`. The evidence order is: (1) usable video dimensions embedded in TorrServer metadata; (2) a recognized structured quality/resolution value describing the release; (3) an unambiguous `4K`/`2160p` marker in the torrent title; (4) the same marker in file paths; (5) default to `1080p`. Higher-priority evidence wins, so embedded non-4K dimensions or an explicit structured 1080p value override conflicting title/path text. Import provenance (including the Sonarr-1080 route), codec and source labels are not quality evidence. Cached NFOs may preserve stream details for an exact source file, but do not determine category, root, or display label.
 
 torr2strm does not call JacRed, Prowlarr, /ffp/, or any other metadata/probing service. It does not run local ffprobe. A 1080p root does not claim every release in it is actually 1080p.
 
@@ -161,3 +161,13 @@ Recoverable media-information failures no longer prevent STRMs from being materi
 Software version: v1.4.7 candidate; mini-PC clean-rebuild/path acceptance passed on 2026-10-14; formal release tag not yet published. Manifest format v5; NFO format v3. GitHub Actions passed all 36 tests. The 50-torrent clean sync reported `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, `failed=1`; the only logged skip was a Blu-ray ISO with no playable video files. Release/source-format filtering remains the responsibility of Sonarr/Radarr.
 
 The accepted mini-PC rebuild installed commit `387696cde4eb9682a231eb4d893b6c5344981a95` and regenerated both configured output trees without migration. The post-sync audit found no path component above 255 UTF-8 bytes; Kodi's Windows/SMB component checks passed. The mini-PC timer was enabled on 2026-10-14; the first timer-triggered run completed normally with `created=0`, `updated=0`, `unchanged=98`, `failed=1` (the expected Blu-ray ISO/no-video skip), and the next run was scheduled for `2026-10-14 20:16:31 +05:00`. For a fresh installation, run `sudo systemctl enable --now torr2strm.timer` after the usual player checks. `torr2strm.service` is a oneshot triggered by the timer; enable the timer, not the service itself. Preserve `/etc/torr2strm/config.toml` and TorrServer's source inventory when upgrading.
+
+## Recoverable source errors
+
+If a torrent hash is present in a successfully retrieved TorrServer inventory but its metadata or `FileStats` cannot be read, torr2strm marks that hash as deferred, logs a structured warning, and continues synchronizing other torrents. Existing managed files and manifest records for the deferred hash are preserved unchanged and retried on the next scheduled run. A hash is eligible for source-disappearance cleanup only when it is absent from a successfully retrieved inventory. An item with no playable video remains a deterministic skip, not a metadata-deferred item.
+
+## Apprise alerts
+
+Warnings and errors from a run are aggregated into separate messages through the shared Apprise API. Warning messages use tag `warnings`; error messages use tag `critical`. The client sends to `POST {apprise_url}/notify/{apprise_config_key}` with JSON fields `title`, `body`, `type`, and `tag`, matching the shared `arr-stack` integration contract. Telegram tokens, chat IDs and topic IDs remain exclusively in the gateway configuration.
+
+Alerts are optional and disabled by default. Set `[notifications].enabled = true` in `/etc/torr2strm/config.toml` after verifying the gateway address and configuration key. Alert fingerprints are stored separately at `/var/lib/torr2strm/notification_state.json`; unchanged warnings/errors are not resent on every five-minute cycle, a clean cycle resets the fingerprint, and failed Apprise delivery is logged locally without failing synchronization. Logging continues to retain the original warnings/errors independently of Apprise.
