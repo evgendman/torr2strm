@@ -246,7 +246,7 @@ def test_bounded_strm_collision_leaf_uses_identity_and_respects_name_max():
     assert extended.endswith(f" [{full_hash}-123456789].VOB")
 
 
-def test_jellyfin_multidisc_repeated_vob_names_are_all_materialized_without_changing_normal_names():
+def test_jellyfin_multidisc_repeated_vob_names_are_all_materialized_without_changing_normal_names(caplog):
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr, kr = base / "jelly", base / "kodi"
@@ -273,8 +273,23 @@ def test_jellyfin_multidisc_repeated_vob_names_are_all_materialized_without_chan
         config = cfg(jr, kr)
         config["sync"]["video_extensions"] = {".vob", ".mkv"}
         config["outputs"]["kodi"]["enabled"] = False
+        caplog.set_level(logging.WARNING, logger="torr2strm")
 
         assert run(config, client) == 0
+
+        summaries = [
+            record.getMessage() for record in caplog.records
+            if record.getMessage().startswith("STRM_COLLISION_SUMMARY ")
+        ]
+        assert len(summaries) == 1
+        assert "title='Lexx (1997) Season 01 DVD collection'" in summaries[0]
+        assert "hash=" + h in summaries[0]
+        assert "affected_files=5" in summaries[0]
+        assert "short_hash_files=5" in summaries[0]
+        assert "full_hash_files=0" in summaries[0]
+        assert "DVD2/VIDEO_TS/VTS_01_0.VOB" in summaries[0]
+        assert "DVD3/VIDEO_TS/VTS_01_0.VOB" in summaries[0]
+        assert "DVD4/VIDEO_TS/VTS_01_0.VOB" in summaries[0]
 
         series_root = next((jr / "tv" / "1080p").iterdir())
         season_dir = series_root / "Season 01"
@@ -1142,8 +1157,23 @@ def test_apprise_notifications_use_shared_contract_and_suppress_unchanged_events
             "ERROR output=%s hash=%s operation=%s",
             ("jellyfin", "b" * 40, "sync"), None,
         )
+        collision_summary = logging.LogRecord(
+            "torr2strm", logging.WARNING, __file__, 3,
+            "STRM_COLLISION_SUMMARY output=%s title=%r hash=%s affected_files=%d short_hash_files=%d full_hash_files=%d examples=%s",
+            (
+                "jellyfin", "Lexx (1997) Season 01 DVD collection", "a" * 40, 22, 22, 0,
+                "file_id=72:Season 1/DVD1/VTS_01_0.VOB;file_id=82:Season 1/DVD2/VTS_01_0.VOB;file_id=91:Season 1/DVD3/VTS_01_0.VOB",
+            ), None,
+        )
+        collision_detail = logging.LogRecord(
+            "torr2strm", logging.WARNING, __file__, 4,
+            "STRM_COLLISION_RESOLVED output=%s hash=%s file_id=%d source=%s suffix=%s",
+            ("jellyfin", "a" * 40, 72, "Season 1/DVD1/VTS_01_0.VOB", "aaaaaaaa-72"), None,
+        )
         capture.emit(warning)
         capture.emit(error)
+        capture.emit(collision_summary)
+        capture.emit(collision_detail)
         with patch.object(torr2strm_module.urllib.request, "urlopen", return_value=Response()) as urlopen:
             dispatch_run_notifications(cfg_data, capture)
             assert urlopen.call_count == 2
@@ -1154,6 +1184,12 @@ def test_apprise_notifications_use_shared_contract_and_suppress_unchanged_events
             error_payload = next(p for p in payloads if p["type"] == "failure")
             assert warning_payload["tag"] == "warnings"
             assert "TORRENT_DEFERRED" in warning_payload["body"]
+            assert "STRM_COLLISION_SUMMARY" in warning_payload["body"]
+            assert "Lexx (1997) Season 01 DVD collection" in warning_payload["body"]
+            assert "affected_files=22" in warning_payload["body"]
+            assert "DVD2/VTS_01_0.VOB" in warning_payload["body"]
+            assert "DVD3/VTS_01_0.VOB" in warning_payload["body"]
+            assert "STRM_COLLISION_RESOLVED" not in warning_payload["body"]
             assert error_payload["tag"] == "critical"
             assert "ERROR output=jellyfin" in error_payload["body"]
             dispatch_run_notifications(cfg_data, capture)
