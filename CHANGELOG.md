@@ -1,18 +1,20 @@
 # Changelog
 
-## 1.4.7 (mini-PC acceptance passed; formal release tag pending)
+## 1.4.8 (review branch; pending CI and mini-PC validation)
 
-- Use usable video dimensions already embedded in TorrServer metadata as the first choice for the quality root. When such dimensions are unavailable, an explicit `4K` or `2160p` marker in the release title may select the `4K` root; usable non-4K dimensions always override title markers.
-- In Kodi TV output, stop creating per-episode NFO sidecars. Create `tvshow.nfo` only at the root of an identified series and keep it until no managed release references it.
+- Complete quality-root evidence precedence: embedded video dimensions, recognized structured TorrServer resolution fields, explicit 4K/2160p markers in the torrent title, then file paths, then the 1080p fallback.
+- Isolate per-torrent metadata/FileStats failures. Preserve prior Jellyfin/Kodi outputs and manifest records for deferred hashes while continuing to synchronize healthy torrents; retry on the next run.
+- Add optional aggregated Apprise warnings/errors using the shared arr-stack endpoint, with warnings and critical tags, bounded requests and persisted fingerprint suppression. Delivery failures remain log-only and do not affect sync exit status.
+- Keep standalone CLI and systemd timer behavior; torr2jellyfin integration Phase 10 remains deferred.
+- Add regressions for structured/path quality evidence, deferred-source safety and Apprise routing/deduplication.
+
+## 1.4.7 (published and accepted on the mini-PC)
+
+- Use usable video dimensions already embedded in TorrServer metadata as the first choice for the quality root. When such dimensions are unavailable, an explicit 4K or 2160p marker in the release title may select the 4K root; usable non-4K dimensions always override title markers.
+- In Kodi TV output, stop creating per-episode NFO sidecars. Create tvshow.nfo only at the root of an identified series and keep it until no managed release references it.
 - Bound every Kodi directory and file component to 255 UTF-8 bytes using stable suffixes for truncated names; keep Windows/SMB sanitization and resolve collisions after truncation.
-- Add regressions for an overlong Prestige-style movie directory, long UTF-8 components, colliding long source folders, and stable repeat syncs.
-- Require a clean rebuild of the disposable STRM trees for candidate acceptance; no directory or manifest migration is implemented. Preserve Kodi movie NFOs, Jellyfin paths/NFO behavior, NFO format v3, manifest format v5, and the no-network/no-new-ffprobe policy.
-
-
-- Mini-PC acceptance completed on 2026-10-14 using commit `387696cde4eb9682a231eb4d893b6c5344981a95` after a clean rebuild of both generated output trees. The 50-torrent sync reported `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, and `failed=1`. The only logged skip/error was the expected `QUALITY_SKIP: no video files` for a Blu-ray ISO; there were no other synchronization errors.
-- Post-sync path audit: Jellyfin contained 663 STRM and 694 NFO files; Kodi contained 561 STRM and 32 NFO files. Every audited path component in both trees was at most 255 UTF-8 bytes. The Prestige Kodi movie directory was shortened to 255 bytes, and the Kodi Windows/SMB component checks passed.
-- Disc/ISO source filtering remains the responsibility of Sonarr/Radarr quality and release-selection settings; torr2strm remains a STRM tree generator and skips items that expose no playable video files. The v1.4.7 candidate is accepted for scheduled synchronization; publishing a formal release tag is a separate step.
-- Scheduled-operation acceptance completed on the mini-PC on 2026-10-14: `torr2strm.timer` was enabled and active; the first timer-triggered run completed successfully with `created=0`, `updated=0`, `unchanged=98`, `failed=1` (the same expected Blu-ray ISO/no-video skip). `torr2strm.service` returned to `inactive` after completing normally, and systemd reported the next run for `2026-10-14 20:16:31 +05:00`.
+- GitHub Actions passed 36 tests. Mini-PC acceptance completed on 2026-10-14 using commit 387696cde4eb9682a231eb4d893b6c5344981a95 after clean rebuild of both output trees; the first timer-triggered run reported 98 unchanged entries. The only logged skip was a Blu-ray ISO with no playable video files.
+- Official release v1.4.7 was published on 2026-10-13. The later clean-rebuild/path acceptance confirmed it works for ordinary scheduled synchronization.
 
 ## 1.4.6
 
