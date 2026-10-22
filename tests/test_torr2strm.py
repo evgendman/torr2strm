@@ -16,6 +16,7 @@ from torr2strm import (
     OutputSpec,
     SyncCoordinator,
     bounded_strm_leaf,
+    bounded_strm_collision_leaf,
     bounded_kodi_leaf,
     bounded_kodi_component,
     sanitize_kodi_component,
@@ -229,6 +230,84 @@ def test_long_utf8_strm_nfo_names_are_bounded_and_atomic_write_succeeds():
         atomic_write_text(nfo, "<movie/>\n")
         assert nfo.read_text(encoding="utf-8") == "<movie/>\n"
 
+
+
+def test_bounded_strm_collision_leaf_uses_identity_and_respects_name_max():
+    short = bounded_strm_collision_leaf("VTS_01_1.VOB", "aa7edb49-12")
+    assert short == "VTS_01_1.VOB [aa7edb49-12]"
+    assert len((short + ".strm").encode("utf-8")) <= 255
+    assert len((short + ".nfo").encode("utf-8")) <= 255
+
+    full_hash = "aa7edb49969f25ebbdfb2c4bb0b2c0ed68f11c55"
+    long_source = ("ОченьДлинноеИмяDVD" * 35) + ".VOB"
+    extended = bounded_strm_collision_leaf(long_source, f"{full_hash}-123456789")
+    assert len((extended + ".strm").encode("utf-8")) <= 255
+    assert len((extended + ".nfo").encode("utf-8")) <= 255
+    assert extended.endswith(f" [{full_hash}-123456789].VOB")
+
+
+def test_jellyfin_multidisc_repeated_vob_names_are_all_materialized_without_changing_normal_names():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "a" * 40
+        paths = [
+            "DVD2/VIDEO_TS/VTS_01_0.VOB",
+            "DVD3/VIDEO_TS/VTS_01_0.VOB",
+            "DVD4/VIDEO_TS/VTS_01_0.VOB",
+            "DVD2/VIDEO_TS/VTS_01_1.VOB",
+            "DVD3/VIDEO_TS/VTS_01_1.VOB",
+            "DVD2/VIDEO_TS/Unique.mkv",
+        ]
+        t = torrent(
+            h=h,
+            title="Lexx (1997) Season 01 DVD collection",
+            category="tv",
+            paths=paths,
+            lengths=[600, 590, 580, 570, 560, 100],
+            data={},
+        )
+        p = probe(1920, 1080)
+        attach_existing_probe(t, p)
+        client = FakeClient([t], probes={(h, file_id): p for file_id in range(1, len(paths) + 1)})
+        config = cfg(jr, kr)
+        config["sync"]["video_extensions"] = {".vob", ".mkv"}
+        config["outputs"]["kodi"]["enabled"] = False
+
+        assert run(config, client) == 0
+
+        series_root = next((jr / "tv" / "1080p").iterdir())
+        season_dir = series_root / "Season 01"
+        strms = sorted(season_dir.glob("*.strm"))
+        assert len(strms) == len(paths)
+
+        # Both repeated-name groups receive deterministic short-hash + TorrServer file-ID suffixes.
+        for file_id, filename in (
+            (1, "VTS_01_0.VOB"), (2, "VTS_01_0.VOB"), (3, "VTS_01_0.VOB"),
+            (4, "VTS_01_1.VOB"), (5, "VTS_01_1.VOB"),
+        ):
+            assert any(p.name == f"{filename} [{h[:8]}-{file_id}].strm" for p in strms)
+        assert (season_dir / "Unique.mkv.strm").is_file()
+
+        manifest_path = jr / ".torr2strm" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        records = manifest["torrents"][h]["files"]
+        assert len(records) == len(paths)
+        records_by_id = {record["file_id"]: (rel_path, record) for rel_path, record in records.items()}
+        assert set(records_by_id) == set(range(1, len(paths) + 1))
+        for file_id, (rel_path, record) in records_by_id.items():
+            output_path = jr / rel_path
+            assert output_path.is_file()
+            assert record["source_path"] == paths[file_id - 1]
+            assert f"/play/{h}/{file_id}" in output_path.read_text(encoding="utf-8")
+        assert len(list(season_dir.glob("*.nfo"))) == len(paths)
+        assert all(len(p.name.encode("utf-8")) <= 255 for p in season_dir.iterdir() if p.is_file())
+
+        before = sorted(p.relative_to(jr).as_posix() for p in jr.rglob("*.strm"))
+        assert run(config, client) == 0
+        after = sorted(p.relative_to(jr).as_posix() for p in jr.rglob("*.strm"))
+        assert before == after
+        assert len(after) == len(paths)
 
 
 def test_sanitize_kodi_component_replaces_windows_reserved_names_and_punctuation():
