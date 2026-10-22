@@ -996,6 +996,30 @@ def test_torr2strm_does_not_request_ffprobe_from_torrserver():
 
 
 
+
+def test_sync_places_release_in_4k_root_from_file_path_marker_without_fabricating_label():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "c" * 40
+        t = torrent(
+            h=h,
+            title="Release without resolution in title",
+            category="movie",
+            paths=["Film.Release.2160p.WEB-DL.mkv"],
+            data={"import_source": "Sonarr-1080"},
+        )
+        assert run(cfg(jr, kr), FakeClient([t])) == 0
+        jelly_files = list((jr / "movie" / "4K").rglob("*.strm"))
+        kodi_files = list((kr / "movie" / "4K").rglob("*.strm"))
+        assert len(jelly_files) == 1
+        assert len(kodi_files) == 1
+        assert not list((jr / "movie" / "1080p").rglob("*.strm"))
+        assert not list((kr / "movie" / "1080p").rglob("*.strm"))
+        # Path evidence selects the folder only; it doesn't fabricate a basename label.
+        assert "2160p" not in jelly_files[0].name
+        assert "HDR" not in jelly_files[0].name
+
 def test_deferred_torrent_preserves_previous_trees_while_healthy_items_continue():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
