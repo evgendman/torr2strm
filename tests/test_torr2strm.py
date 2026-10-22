@@ -495,10 +495,10 @@ def test_missing_or_unsupported_torrserver_category_stays_uncategorized_without_
         with patch("torr2strm.urllib.request.urlopen", side_effect=AssertionError("unexpected HTTP request")):
             assert run(cfg(jr, kr), client) == 0
         for root in (jr, kr):
-            # Category remains _uncategorized, while the explicit 2160p title
-            # marker independently selects the 4K quality root.
-            assert len(list((root / "_uncategorized" / "1080p").rglob("*.strm"))) == 1
-            assert len(list((root / "_uncategorized" / "4K").rglob("*.strm"))) == 1
+            # Unsupported/missing category stays _uncategorized. Both items have
+            # recognized structured 2160p metadata, which outranks title/path hints.
+            assert len(list((root / "_uncategorized" / "1080p").rglob("*.strm"))) == 0
+            assert len(list((root / "_uncategorized" / "4K").rglob("*.strm"))) == 2
             assert not (root / "movie").exists()
             assert not (root / "tv").exists()
 
@@ -672,7 +672,7 @@ def test_kodi_shared_series_directory_cleanup_preserves_other_release():
         assert (kr / "tv" / "1080p" / "Shared Show (2020)" / "tvshow.nfo").is_file()
 
 
-def test_explicit_4k_title_fallback_can_select_root_even_when_label_is_structured():
+def test_structured_lower_resolution_overrides_explicit_4k_title_fallback():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         jr, kr = base / "jelly", base / "kodi"
@@ -680,7 +680,7 @@ def test_explicit_4k_title_fallback_can_select_root_even_when_label_is_structure
         t = torrent(h=h, title="Film.2160p.HDR", category="movie", data={"quality": "720p"})
         client = FakeClient([t], probes={})
         assert run(cfg(jr, kr), client) == 0
-        kodi_strm = next((kr / "movie" / "4K").rglob("*.strm"))
+        kodi_strm = next((kr / "movie" / "1080p").rglob("*.strm"))
         assert "720p" in kodi_strm.name
         assert "2160p" not in kodi_strm.name
         assert client.ffprobe_calls == []
