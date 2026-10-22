@@ -52,7 +52,7 @@ This is an in-place code/configuration upgrade. It does not require deleting or 
    ```toml
    [notifications]
    enabled = true
-   apprise_url = "http://192.168.0.14:8000"
+   apprise_url = ""
    apprise_config_key = "arr-stack"
    service_name = "torr2strm / MINI-Ubuntu"
    timeout_sec = 5
@@ -61,7 +61,7 @@ This is an in-place code/configuration upgrade. It does not require deleting or 
    state_path = "/var/lib/torr2strm/notification_state.json"
    ```
 
-   Leave `enabled = false` until the first dry run succeeds and the endpoint/key are confirmed. Telegram tokens, chat IDs and topic IDs stay in Apprise. Fingerprints are stored separately from media manifests and prevent identical messages from repeating every five minutes.
+   Replace the empty `apprise_url` with the exact base URL of the already configured shared gateway; do not append `/notify/arr-stack`. Leave `enabled = false` until the URL and `arr-stack` key have been confirmed. Telegram tokens, chat IDs and topic IDs stay in Apprise. Fingerprints are stored separately from media manifests and prevent identical messages from repeating every five minutes.
 
 5. Validate configuration via dry run before starting the timer:
 
