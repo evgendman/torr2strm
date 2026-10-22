@@ -1,4 +1,4 @@
-# torr2strm v1.4.9
+# torr2strm v1.4.10
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -159,7 +159,7 @@ Recoverable media-information failures no longer prevent STRMs from being materi
 
 ## Upgrade and deployment
 
-Software version: v1.4.9. Manifest format v5; NFO format v3. This release changes only Jellyfin destination names when two or more source files collide; ordinary paths, the manifest schema, NFO schema, Kodi normalization and TorrServer data remain unchanged. A clean rebuild is not required.
+Software version: v1.4.10. Manifest format v5; NFO format v3. This patch improves Apprise collision alerts by naming the affected release and summarizing affected files. Jellyfin/Kodi trees, manifest schema, NFO schema and TorrServer data remain unchanged. A clean rebuild is not required.
 
 For an in-place upgrade, preserve `/etc/torr2strm/config.toml`, TorrServer's inventory and both configured output trees. The installer stops the timer and service and preserves the timer's enabled/disabled state, but does not start the timer. Run the installed version check and a `--dry-run` first. Review any `STRM_COLLISION_RESOLVED` / `STRM_COLLISION_HASH_EXTENDED` entries and confirm there is no `STRM_COLLISION_UNRESOLVED` event before the first real synchronization. Re-enable the timer only after accepting the resulting output.
 
@@ -169,6 +169,6 @@ If a torrent hash is present in a successfully retrieved TorrServer inventory bu
 
 ## Apprise alerts
 
-Warnings and errors from a run are aggregated into separate messages through the shared Apprise API. Warning messages use tag `warnings`; error messages use tag `critical`. The client sends to `POST {apprise_url}/notify/{apprise_config_key}` with JSON fields `title`, `body`, `type`, and `tag`, matching the shared `arr-stack` integration contract. Telegram tokens, chat IDs and topic IDs remain exclusively in the gateway configuration.
+Warnings and errors from a run are aggregated into separate messages through the shared Apprise API. Warning messages use tag `warnings`; error messages use tag `critical`. The client sends to `POST {apprise_url}/notify/{apprise_config_key}` with JSON fields `title`, `body`, `type`, and `tag`, matching the shared `arr-stack` integration contract. Telegram tokens, chat IDs and topic IDs remain exclusively in the gateway configuration. For STRM filename collisions, the notification includes one title-bearing summary per affected torrent: release title, full hash, number of affected files, short/full-hash suffix counts and representative source paths. Detailed per-file collision records remain in the local journal and are not repeated as separate Apprise bullet points. An unresolved collision includes the release title in the critical diagnostic.
 
 Alerts are optional and disabled by default. Set `[notifications].enabled = true` in `/etc/torr2strm/config.toml` after verifying the gateway address and configuration key. Alert fingerprints are stored separately at `/var/lib/torr2strm/notification_state.json`; unchanged warnings/errors are not resent on every five-minute cycle, a clean cycle resets the fingerprint, and failed Apprise delivery is logged locally without failing synchronization. Logging continues to retain the original warnings/errors independently of Apprise.
