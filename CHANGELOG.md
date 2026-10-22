@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.9
+
+- Resolve Jellyfin STRM destination collisions before writing files. Every participant receives a deterministic suffix containing the short torrent hash and TorrServer file ID; if a residual collision remains, retry with the full hash and file ID.
+- Leave ordinary Jellyfin filenames and the existing Season NN directory-generation behavior unchanged when no collision occurs. Do not infer episode numbers or interpret DVD/Blu-ray directory semantics.
+- Keep every generated STRM basename within the 255-byte filesystem-component limit including the .strm extension; keep NFO sidecars paired to the resolved STRM path.
+- Never silently skip a colliding video file. Add regressions for repeated VOB basenames across a multi-DVD Lexx-like release, stable repeated synchronization, manifest/file-ID pairing, and long UTF-8 names.
+- No manifest or NFO schema change is required. Mini-PC deployment acceptance remains pending.
+
 ## 1.4.8 (CI passed; mini-PC acceptance pending)
 
 - Complete quality-root evidence precedence: embedded video dimensions, recognized structured TorrServer resolution fields, explicit 4K/2160p markers in the torrent title, then file paths, then the 1080p fallback.
