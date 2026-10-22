@@ -1016,9 +1016,10 @@ def test_sync_places_release_in_4k_root_from_file_path_marker_without_fabricatin
         assert len(kodi_files) == 1
         assert not list((jr / "movie" / "1080p").rglob("*.strm"))
         assert not list((kr / "movie" / "1080p").rglob("*.strm"))
-        # Path evidence selects the folder only; it doesn't fabricate a basename label.
-        assert "2160p" not in jelly_files[0].name
-        assert "HDR" not in jelly_files[0].name
+        # Path evidence selects the folder only. Jellyfin preserves the original
+        # source basename, while Kodi's movie name must not fabricate a label.
+        assert "2160p" not in kodi_files[0].name
+        assert "HDR" not in kodi_files[0].name
 
 def test_deferred_torrent_preserves_previous_trees_while_healthy_items_continue():
     with tempfile.TemporaryDirectory() as td:
