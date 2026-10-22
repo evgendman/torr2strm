@@ -1,4 +1,4 @@
-# torr2strm v1.4.8
+# torr2strm v1.4.9
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -15,6 +15,7 @@ Two output trees are supported now:
 - `movie`: one `.strm` per playable video file.
 - `tv`: one `.strm` per playable video file under `Season NN`.
 - Playback URL is TorrServer `/play/{hash}/{file_id}`.
+- Filenames remain unchanged unless multiple files map to one destination. Collision participants receive stable short-hash + TorrServer file-ID suffixes; a residual collision escalates to the full hash. The final `.strm` component stays within 255 UTF-8 bytes; episode identities are never guessed.
 - This is the authoritative output and the only output allowed to reverse-delete the source torrent.
 
 Default root:
@@ -158,9 +159,9 @@ Recoverable media-information failures no longer prevent STRMs from being materi
 
 ## Upgrade and deployment
 
-Software version: v1.4.7 candidate; mini-PC clean-rebuild/path acceptance passed on 2026-10-14; formal release tag not yet published. Manifest format v5; NFO format v3. GitHub Actions passed all 36 tests. The 50-torrent clean sync reported `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, `failed=1`; the only logged skip was a Blu-ray ISO with no playable video files. Release/source-format filtering remains the responsibility of Sonarr/Radarr.
+Software version: v1.4.9. Manifest format v5; NFO format v3. This release changes only Jellyfin destination names when two or more source files collide; ordinary paths, the manifest schema, NFO schema, Kodi normalization and TorrServer data remain unchanged. A clean rebuild is not required.
 
-The accepted mini-PC rebuild installed commit `387696cde4eb9682a231eb4d893b6c5344981a95` and regenerated both configured output trees without migration. The post-sync audit found no path component above 255 UTF-8 bytes; Kodi's Windows/SMB component checks passed. The mini-PC timer was enabled on 2026-10-14; the first timer-triggered run completed normally with `created=0`, `updated=0`, `unchanged=98`, `failed=1` (the expected Blu-ray ISO/no-video skip), and the next run was scheduled for `2026-10-14 20:16:31 +05:00`. For a fresh installation, run `sudo systemctl enable --now torr2strm.timer` after the usual player checks. `torr2strm.service` is a oneshot triggered by the timer; enable the timer, not the service itself. Preserve `/etc/torr2strm/config.toml` and TorrServer's source inventory when upgrading.
+For an in-place upgrade, preserve `/etc/torr2strm/config.toml`, TorrServer's inventory and both configured output trees. The installer stops the timer and service and preserves the timer's enabled/disabled state, but does not start the timer. Run the installed version check and a `--dry-run` first. Review any `STRM_COLLISION_RESOLVED` / `STRM_COLLISION_HASH_EXTENDED` entries and confirm there is no `STRM_COLLISION_UNRESOLVED` event before the first real synchronization. Re-enable the timer only after accepting the resulting output.
 
 ## Recoverable source errors
 

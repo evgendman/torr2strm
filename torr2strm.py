@@ -35,7 +35,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.8"
+VERSION = "1.4.9"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -1419,6 +1419,90 @@ def bounded_strm_leaf(value: str, identity: str) -> str:
     return f"{stem}{suffix}{ext}"
 
 
+def bounded_strm_collision_leaf(value: str, identity: str) -> str:
+    """Add a stable collision identity and keep the final STRM basename <=255 bytes.
+
+    Ordinary names receive the suffix after the original media filename. If a
+    name is too long, truncate its stem at a UTF-8 boundary and retain the
+    identity suffix and source extension where possible. The caller adds .strm.
+    """
+    clean = sanitize_component(value)
+    suffix = f" [{identity}]"
+    max_leaf_bytes = 255 - len(".strm".encode("utf-8"))
+    suffix_bytes = len(suffix.encode("utf-8"))
+    if len(clean.encode("utf-8")) + suffix_bytes <= max_leaf_bytes:
+        return f"{clean}{suffix}"
+
+    dot = clean.rfind(".")
+    ext = clean[dot:] if dot > 0 else ""
+    stem = clean[:-len(ext)] if ext else clean
+    budget = max_leaf_bytes - suffix_bytes - len(ext.encode("utf-8"))
+    if budget < 1:
+        # An unusually long source extension must not defeat the filesystem limit.
+        ext = ""
+        stem = clean
+        budget = max_leaf_bytes - suffix_bytes
+    if budget < 1:
+        raise ValueError("collision identity is too long for a Linux filename")
+
+    prefix = truncate_utf8(stem, budget).rstrip().rstrip(".") or "_"
+    result = f"{prefix}{suffix}{ext}"
+    if len(result.encode("utf-8")) > max_leaf_bytes:
+        budget = max_leaf_bytes - suffix_bytes - len(ext.encode("utf-8"))
+        prefix = truncate_utf8(prefix, budget).rstrip().rstrip(".") or "_"
+        result = f"{prefix}{suffix}{ext}"
+    return result
+
+
+def plan_strm_leaves(
+    targets: list[tuple[TorrentFile, Path, str]],
+    torrent_hash: str,
+) -> tuple[dict[int, str], dict[int, int]]:
+    """Plan unique STRM names before writing any STRM/NFO files.
+
+    Names stay unchanged unless destinations collide. The first collision pass
+    adds the short torrent hash and TorrServer file_id to every participant. If
+    a destination still collides, the second pass uses the full hash and ID.
+    """
+    full_hash = canonical_hash(torrent_hash)
+    short_hash = full_hash[:8]
+    source_by_id: dict[int, tuple[Path, str]] = {}
+    for file, target_dir, _ in targets:
+        if file.file_id in source_by_id:
+            raise ValueError(f"duplicate TorrServer file_id while planning STRM names: {file.file_id}")
+        source_by_id[file.file_id] = (target_dir, Path(file.path).name)
+
+    leaves = {
+        file_id: bounded_strm_leaf(name, f"{short_hash}-{file_id}")
+        for file_id, (_, name) in source_by_id.items()
+    }
+    collision_levels: dict[int, int] = {}
+
+    def colliding_groups() -> list[list[int]]:
+        by_destination: dict[str, list[int]] = {}
+        for file_id, (target_dir, _) in source_by_id.items():
+            destination = (target_dir / f"{leaves[file_id]}.strm").as_posix()
+            by_destination.setdefault(destination, []).append(file_id)
+        return [group for group in by_destination.values() if len(group) > 1]
+
+    for group in colliding_groups():
+        for file_id in group:
+            _, source_name = source_by_id[file_id]
+            leaves[file_id] = bounded_strm_collision_leaf(source_name, f"{short_hash}-{file_id}")
+            collision_levels[file_id] = 1
+
+    for group in colliding_groups():
+        for file_id in group:
+            _, source_name = source_by_id[file_id]
+            leaves[file_id] = bounded_strm_collision_leaf(source_name, f"{full_hash}-{file_id}")
+            collision_levels[file_id] = 2
+
+    unresolved = colliding_groups()
+    if unresolved:
+        raise RuntimeError(f"unable to resolve STRM destination collisions for TorrServer files: {unresolved!r}")
+    return leaves, collision_levels
+
+
 def atomic_write_text(path: Path, content: str, mode: int = 0o666) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # A long final filename cannot be reused as the tempfile prefix: the
@@ -2328,7 +2412,6 @@ class OutputRunner:
         desired: dict[str, dict[str, Any]] = {}
         nfo_contents_by_file_id: dict[int, str] = {}
         desired_dirs: set[str] = {rel_torrent_dir}
-        seen_destinations: set[str] = set()
         video_files = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
         if not video_files:
             raise RuntimeError(f"torrent {snap.hash}: no video files")
@@ -2353,6 +2436,22 @@ class OutputRunner:
                     playback_url = self._elementum_url(snap, None) if self.spec.name == "kodi" else f"{self.client.base_url}/play/{urllib.parse.quote(snap.hash, safe='')}/{file.file_id}"
                     targets.append((file, target_dir, playback_url))
 
+        planned_leaves, collision_levels = plan_strm_leaves(targets, snap.hash)
+        file_by_id = {file.file_id: file for file, _, _ in targets}
+        for file_id, level in sorted(collision_levels.items()):
+            file = file_by_id[file_id]
+            if level == 1:
+                LOG.warning(
+                    "STRM_COLLISION_RESOLVED output=%s hash=%s file_id=%d source=%s suffix=%s",
+                    self.spec.name, snap.hash, file_id, file.path, f"{canonical_hash(snap.hash)[:8]}-{file_id}",
+                )
+            else:
+                LOG.warning(
+                    "STRM_COLLISION_HASH_EXTENDED output=%s hash=%s file_id=%d source=%s suffix=%s",
+                    self.spec.name, snap.hash, file_id, file.path, f"{canonical_hash(snap.hash)}-{file_id}",
+                )
+
+        seen_destinations: set[str] = set()
         for file, target_dir, url in targets:
             self._mkdir(target_dir)
             desired_dirs.add(target_dir.relative_to(self.root).as_posix())
@@ -2360,14 +2459,14 @@ class OutputRunner:
                 base_name = bounded_strm_leaf(nfo_movie_title(snap), snap.hash[:8])
                 strm_path = safe_join(torrent_dir, base_name + ".strm")
             else:
-                base_name = bounded_strm_leaf(Path(file.path).name, f"{snap.hash[:8]}-{file.file_id}")
+                base_name = planned_leaves[file.file_id]
                 strm_path = safe_join(target_dir, base_name + ".strm")
             rel_strm = strm_path.relative_to(self.root).as_posix()
             nfo_path = strm_path.with_suffix(".nfo")
             rel_nfo = nfo_path.relative_to(self.root).as_posix()
             if rel_strm in seen_destinations:
-                LOG.error("STRM_COLLISION output=%s hash=%s destination=%s source=%s", self.spec.name, snap.hash, rel_strm, file.path)
-                continue
+                LOG.error("STRM_COLLISION_UNRESOLVED output=%s hash=%s destination=%s source=%s", self.spec.name, snap.hash, rel_strm, file.path)
+                raise RuntimeError(f"unresolved STRM destination collision: {rel_strm}")
             seen_destinations.add(rel_strm)
 
             payload = media_payloads.get(file.file_id)

@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.7 is published and accepted for ordinary scheduled operation.** The official GitHub release/tag was published on 2026-10-13; GitHub Actions passed 36 tests at commit `387696cde4eb9682a231eb4d893b6c5344981a95`. On 2026-10-14, the mini-PC installed that exact commit and completed a clean rebuild/synchronization across 50 TorrServer torrents: `quality_ready=49`, `quality_unresolved=1`, `created=98`, `updated=0`, `unchanged=0`, `failed=1`. The sole logged skip was the expected `QUALITY_SKIP: no video files` for a Blu-ray ISO; no other synchronization errors were found. Both generated trees passed the path audit (all components at most 255 UTF-8 bytes), Windows/SMB checks passed, and the first timer-triggered run completed with 98 unchanged entries. Follow-up work is being prepared as v1.4.8; Phase 10 (torr2jellyfin integration) is intentionally deferred.
+> **v1.4.8 is published; mini-PC acceptance remains pending.** The v1.4.8 mini-PC dry run exposed a Jellyfin STRM filename collision for multi-disc TV releases with repeated VOB basenames under different DVD directories: files were flattened into Season NN, and later files were skipped. v1.4.9 is scoped to deterministic collision resolution; the reference mini-PC timer remains stopped until the new version passes deployment checks.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -418,6 +418,31 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 8d — Publish the formal `v1.4.7` release/tag (published 2026-10-13; mini-PC acceptance passed 2026-10-14)
 - [x] Phase 9 — Implement expanded quality-root evidence precedence (v1.4.8; CI passed, mini-PC acceptance pending)
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
-- [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8 review branch; pending validation)
+- [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
+- [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation; mini-PC acceptance pending)
 
-The v1.4.7 release remains the published production baseline and is not rewritten. The v1.4.8 review branch implements Phase 9 quality-evidence precedence, Phase 11 resilient per-torrent metadata handling, and opt-in Apprise warning/error alerts; automated CI passed (39 tests); mini-PC acceptance remains pending. Phase 10 is intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer must remain available.
+The v1.4.8 release is published, with mini-PC acceptance pending. Its dry run identified the repeated-basename collision described above. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer must remain available.
+
+
+## 8. Collision-safe Jellyfin filenames (v1.4.9)
+
+**Status: implementation and regression tests prepared; mini-PC acceptance pending.**
+
+### Decision
+
+Do not redesign the existing Jellyfin TV folder-building algorithm in this change. Files that the current implementation places under Season NN remain there. The importer does not inspect DVD/Blu-ray navigation structures, infer episode identities, or try to repair the releaser's layout.
+
+### Behavior
+
+- Plan all per-torrent STRM destinations before writing any STRM/NFO, so a collision cannot be resolved by keeping the first file and silently skipping later files.
+- If multiple files map to the same destination, add a deterministic identity suffix to every participant: short torrent hash plus the exact TorrServer file_id (the ID used in /play/{hash}/{file_id}, not the zero-based Elementum oindex).
+- Re-check the complete planned destination set. If a collision remains, extend the hash portion to the full torrent hash while retaining the TorrServer file ID.
+- Keep the final .strm basename at or below 255 UTF-8 bytes. Truncate only the readable source-name portion on UTF-8 boundaries when required; retain the stable identity suffix and preserve the source extension where possible. Paired .nfo names follow the resolved STRM basename.
+- Leave all ordinary non-colliding Jellyfin filenames unchanged. Keep manifest schema v5 and NFO format v3; no clean rebuild or schema migration is required.
+- If an impossible residual collision remains after the full-hash pass, fail the affected torrent visibly rather than omit a video file or write a misleading manifest.
+
+### Regression and mini-PC acceptance
+
+- Include a Lexx-like multi-DVD fixture with repeated VTS_01_0.VOB / VTS_01_1.VOB names under different DVD directories and a non-colliding control file.
+- Assert that every playable input file has exactly one stable STRM and paired NFO, every STRM URL uses the corresponding TorrServer file_id, manifest records preserve every source_path, ordinary names remain unchanged, no component exceeds 255 bytes, and a repeated sync leaves paths unchanged.
+- On the mini-PC, keep the timer stopped, install v1.4.9, run tests/compile and --dry-run, inspect collision-resolution logs and the unresolved-collision guard, and only then perform one real sync. Re-enable the timer only after reviewing the real output and confirming that all expected Lexx entries exist.

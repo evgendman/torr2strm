@@ -25,6 +25,8 @@ The quality root is selected from usable video dimensions already embedded in To
 
 Within `tv`, content is organized below `Season NN`. When the season cannot be inferred, `[sync].tv_unmatched_season` controls the fallback (default `0`).
 
+Jellyfin's existing TV folder layout is intentionally unchanged. When flattening files into a Season NN directory causes repeated basenames to target the same path, torr2strm resolves the entire collision group before writing: each participant receives a stable short-torrent-hash plus TorrServer file_id suffix. If a destination still collides, it retries with the full hash plus file ID. The final .strm component is limited to 255 UTF-8 bytes, preserving the identity suffix and source extension where possible. Ordinary non-colliding names remain unchanged, and torr2strm does not infer what episode a DVD/Blu-ray file contains.
+
 Jellyfin output creates one STRM per playable video file. Kodi/Elementum creates torrent-level STRM for movies and file-level STRM for TV; TV playback passes the original zero-based FileStats order as `oindex`.
 
 Every generated Kodi path component—including normalized movie/series directories and nested folders retained from unidentified torrents—is Windows/SMB-safe and bounded to at most 255 UTF-8 bytes. Short names stay unchanged; long components are truncated only at UTF-8 boundaries and receive a deterministic identity suffix. Collisions are resolved after sanitization and truncation. STRM/NFO basename helpers still preserve extensions and the quality/hash suffix contract. This is a per-component limit, not a guarantee about the maximum total Windows path length.
