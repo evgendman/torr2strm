@@ -20,4 +20,4 @@ Jellyfin's current per-item NFO generation and output layout are unchanged. Avai
 
 No new ffprobe execution or TorrServer `/ffp/` request is made. If no usable technical details are already present, an NFO that is still required by the relevant output may be identity-only. Cached NFOs are not used to classify the quality root.
 
-NFO format migrations are versioned independently from the software version. v1.4.7 does not introduce a new NFO XML format version, so no NFO-format-version bump is required.
+NFO format migrations are versioned independently from the software version. Generated-by comments intentionally omit the application release version, and comparison of legacy NFOs ignores only that version token; a software-version-only upgrade therefore does not rewrite sidecars. Changes to XML metadata or `NFO_FORMAT_VERSION` remain significant and update the NFO. v1.4.11 keeps NFO format v3, so no format-version bump or clean rebuild is required.
