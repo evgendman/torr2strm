@@ -59,6 +59,17 @@ Each output has its own:
 
 Manifest state is never copied between roots.
 
+## Output permissions
+
+`torr2strm` intentionally uses maximally permissive standard Unix mode bits for every managed object it creates in the configured output trees:
+
+- **Files:** `0666` — read and write for owner, group, and other.
+- **Directories:** `0777` — read, write, and traverse for owner, group, and other.
+
+This policy applies to the managed Jellyfin and Kodi/Elementum output trees, including generated STRM/NFO files and synchronization state files. It is an explicit project behavior, not a general security recommendation. It does not itself expose these paths over the network or override separate filesystem ACLs or mount restrictions.
+
+The current design sets modes on individual files and directories; inherited permissions through `setgid` or default ACLs are not being introduced. The synchronizer should correct a mode only when it differs from the target mode. Repeating `chmod` when permissions are already correct changes filesystem metadata such as `ctime` and may generate unnecessary Jellyfin watcher events.
+
 ## Category and quality roots
 
 Category is taken only from the category field already present in TorrServer. Supported movie and tv values are preserved. Missing, blank, or unsupported values—including anime—go to _uncategorized. Category is never guessed from title, filename, or external lookup.
