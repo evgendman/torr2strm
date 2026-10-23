@@ -1,6 +1,6 @@
 # Current state
 
-Software version: 1.4.11 (candidate branch; not yet deployed).
+Software version: 1.4.11 (published; reference mini-PC acceptance pending).
 Manifest schema: v5.
 NFO format: v3.
 
@@ -21,4 +21,4 @@ Apprise notification acceptance: on 2026-10-22, `[notifications].enabled` was ch
 Notification usability follow-up (v1.4.10, accepted on 2026-10-22): the release sends one concise `STRM_COLLISION_SUMMARY` per affected torrent with title, full hash, affected-file counts and representative file paths; per-file warnings remain in the local journal but are excluded from Apprise aggregation, and unresolved-collision diagnostics include the title. The v1.4.10 dry run logged `APPRISE_SENT tag=warnings status=200`; the specific run-generated collision summary was not visually confirmed in Telegram. A separate test POST through the same gateway/config and warnings tag was delivered to Telegram, confirming that the route works.
 
 
-NFO/versioning follow-up (Phase 14): candidate v1.4.11 removes the application version from generated NFO headers and normalizes legacy version-only header differences during content comparison. Regression tests cover app-only upgrades and a deliberate `NFO_FORMAT_VERSION` change. NFO format remains v3; no manifest/NFO schema migration or clean rebuild is planned. CI and reference mini-PC acceptance remain pending.
+NFO/versioning follow-up (Phase 14): published v1.4.11 removes the application version from generated NFO headers and normalizes legacy version-only header differences during content comparison. Regression tests cover app-only upgrades and a deliberate `NFO_FORMAT_VERSION` change. NFO format remains v3; no manifest/NFO schema migration or clean rebuild is planned. CI passed; reference mini-PC acceptance remains pending.
