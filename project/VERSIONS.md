@@ -1,6 +1,8 @@
 # Version model
 
-Software version: 1.4.11.
+Software version: 1.4.12.
+
+v1.4.12 narrows canonical title/year selection to Kodi TV series. Movie directory naming remains unchanged from the prior per-quality-root policy; a regression guards this after the v1.4.11 mini-PC dry run exposed unplanned movie path reconciliation.
 
 Manifest schema: v5.
 

@@ -2111,7 +2111,9 @@ class OutputRunner:
             tuple[str, str], list[tuple[int, str, str | None, str]]
         ] = {}
         for h, snap in naming_snapshots.items():
-            if snap.category not in {"tv", "movie"}:
+            # Phase 15 deliberately canonicalizes TV series only. Movie directory
+            # selection must retain the existing per-quality-root behavior.
+            if snap.category != "tv":
                 continue
             identity = media_logical_identity(snap)
             if not identity:
@@ -2142,11 +2144,15 @@ class OutputRunner:
             identity = media_logical_identity(snap) if snap.category in {"tv", "movie"} else None
             self.kodi_identity_by_hash[h] = identity
             if identity:
-                _, _, priority = explicit_display_title(snap, tv=snap.category == "tv")
-                title, year = canonical_by_identity.get(
-                    (snap.category, identity),
-                    explicit_display_title(snap, tv=snap.category == "tv")[:2],
-                )
+                title, year, priority = explicit_display_title(snap, tv=snap.category == "tv")
+                if snap.category == "tv":
+                    # Series naming can use all parsed inventory snapshots,
+                    # including another quality root or a transiently deferred item.
+                    title, year = canonical_by_identity.get(
+                        ("tv", identity), (title, year)
+                    )
+                # Movies intentionally retain the previous per-quality-root
+                # deterministic selection in base_components below.
                 self.kodi_display_title_by_hash[h] = title
                 grouped.setdefault((snap.category, quality_root, identity), []).append(
                     (priority, title, year, h)

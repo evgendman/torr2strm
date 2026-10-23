@@ -1,4 +1,4 @@
-# torr2strm v1.4.11
+# torr2strm v1.4.12
 
 TorrServer -> multiple materialized STRM/NFO trees.
 

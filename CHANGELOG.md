@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.12
+
+- Scope Phase 15's canonical title/year selection strictly to identified Kodi TV series. Identified movie folder naming retains the previous per-quality-root selection behavior.
+- Add a regression test with the same movie identity in 1080p and 4K roots but different source titles/years, proving each root retains its prior folder name.
+- Fix follows the v1.4.11 mini-PC dry-run, which reported planned removal of existing Kodi movie paths; do not accept v1.4.11 for live synchronization.
+- No manifest schema, NFO format, or configuration changes.
+
 ## 1.4.11
 
 - Decouple generated NFO output from the application release version; upgrades that change only the app version must not rewrite existing sidecars. Actual NFO content and `NFO_FORMAT_VERSION` changes still trigger updates.

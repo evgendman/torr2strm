@@ -1455,3 +1455,33 @@ def test_chmod_repairs_modes_only_when_they_differ():
         assert stat.S_IMODE(managed_dir.stat().st_mode) == 0o777
         assert stat.S_IMODE(strm.stat().st_mode) == 0o666
         assert stat.S_IMODE(nfo.stat().st_mode) == 0o666
+
+
+
+def test_kodi_movie_names_remain_scoped_to_each_quality_root():
+    """Series canonicalization must not rename identified movie output folders."""
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h1080, h4k = "a" * 40, "b" * 40
+        t1080 = torrent(
+            h=h1080,
+            title="Alpha Film WEB-DL 2001",
+            category="movie",
+            data={"tmdbId": 1124, "movieTitle": "Alpha Film", "year": 2001},
+        )
+        t4k = torrent(
+            h=h4k,
+            title="Zebra Film UHD 2002",
+            category="movie",
+            data={"tmdbId": 1124, "movieTitle": "Zebra Film", "year": 2002},
+        )
+        attach_existing_probe(t1080, probe(1920, 1080))
+        attach_existing_probe(t4k, probe(3840, 2160, codec="hevc"))
+
+        assert run(cfg(jr, kr), FakeClient([t4k, t1080])) == 0
+
+        assert (kr / "movie" / "1080p" / "Alpha Film (2001)").is_dir()
+        assert (kr / "movie" / "4K" / "Zebra Film (2002)").is_dir()
+        assert not (kr / "movie" / "1080p" / "Zebra Film (2002)").exists()
+        assert not (kr / "movie" / "4K" / "Alpha Film (2001)").exists()
