@@ -1,6 +1,6 @@
 # Current state
 
-Software version: 1.4.11 (published; reference mini-PC acceptance pending).
+Software version: 1.4.12 (published; reference mini-PC acceptance pending).
 Manifest schema: v5.
 NFO format: v3.
 
@@ -22,3 +22,8 @@ Notification usability follow-up (v1.4.10, accepted on 2026-10-22): the release 
 
 
 NFO/versioning follow-up (Phase 14): published v1.4.11 removes the application version from generated NFO headers and normalizes legacy version-only header differences during content comparison. Regression tests cover app-only upgrades and a deliberate `NFO_FORMAT_VERSION` change. NFO format remains v3; no manifest/NFO schema migration or clean rebuild is planned. CI passed; reference mini-PC acceptance remains pending.
+
+
+## v1.4.11 acceptance stop and v1.4.12 correction
+
+The v1.4.11 reference mini-PC dry run on 2026-10-23 reported `created=0 updated=167 unchanged=137 failed=1` and planned `DRY-RUN KODI_REMOVE_MANAGED_FILE` operations for existing movie paths. No live sync was run and the timer remained disabled. Review of the patch showed Phase 15's cross-inventory canonical-name selection had inadvertently been applied to identified movies as well as TV series. v1.4.12 restricts cross-inventory canonicalization to identified Kodi TV series and adds a regression that preserves the prior per-quality-root naming of identified movies. Re-run controlled dry-run acceptance from v1.4.12 before any live sync; do not perform a live sync from v1.4.11.
