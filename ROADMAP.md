@@ -424,6 +424,10 @@ The Kodi series directory changed between syncs from `The White Lotus (2021)` to
 
 **Status: identified on the reference mini-PC on 2026-10-23; implementation and acceptance pending. Keep `torr2strm.timer` stopped.**
 
+**Permission-policy decision**
+
+Keep the current explicit per-object mode policy: `0666` for managed files and `0777` for managed directories. Inherited permissions using `setgid` or default ACLs are out of scope for this phase. Phase 16 must prevent redundant `chmod` calls without narrowing these target modes.
+
 **Problem and evidence**
 
 - Jellyfin's library monitor watches filesystem attribute changes in addition to file/directory creation, deletion, rename, write time, and size. A permission change can therefore emit a watched event even when file contents and modification time are unchanged.
