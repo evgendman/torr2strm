@@ -387,6 +387,39 @@ Currently, `_get_snapshot_list()` raises a fatal error if a torrent appears in t
 - Confirmed source disappearance, intentional Jellyfin reverse deletion, shared Kodi-folder safety, and normal successful reconciliation retain their current behavior.
 - Automated regressions pass before the resilience behavior is deployed to scheduled synchronization.
 
+### Phase 15 — Stable Kodi series naming and quality-unresolved retention
+
+**Status: planned; implementation and regression tests pending.** Identified during reference mini-PC diagnosis on 2026-10-23. The `torr2strm.timer` remains stopped until the fix is implemented and verified with a dry run.
+
+**Reason**
+
+The Kodi series directory changed between syncs from `The White Lotus (2021)` to `The White Lotus (2022)` and back. The current canonical-name candidate pool is derived from `quality_ready`, so a release whose quality could not be resolved in a run is excluded from naming even if its torrent and trusted series identity remain present in TorrServer. When the candidate pool changes, the directory year can change and reconciliation can move STRM/NFO paths. A related risk is that an in-inventory torrent omitted from `quality_ready` may not appear in the next manifest; it must not be treated as a confirmed source disappearance merely because quality preparation failed.
+
+**Agreed behavior**
+
+- For an identified series, compute its canonical Kodi directory identity/name from the successfully read TorrServer inventory snapshots, not only from `quality_ready`. Use trusted series IDs already present in TorrServer metadata; do not contact TMDb or any other external metadata provider.
+- Choose the display title using the existing supported explicit-title priorities and a deterministic tie-breaker. Determine the year separately: collect valid series-year candidates from all available releases of that series, across seasons and quality roots, using the existing metadata/title evidence; choose the numerically smallest valid year. If no valid year is available, omit it. Do not let quality readiness, input order, or quality root select a different canonical year.
+- Use the same canonical series name/year for that trusted series identity in each Kodi quality root. Keep the existing collision handling for distinct series IDs that resolve to the same readable name/year.
+- Separate source-inventory presence from output materializability. If a hash is present in a successfully read TorrServer inventory but its quality resolution is temporarily unresolved, retain its previous managed manifest records and STRM/NFO files rather than treating its omission from `quality_ready` as a source deletion. It must not cause canonical series naming to fall back to another release for that run.
+- When a valid quality-ready snapshot becomes available again, reconcile the item normally against its verified metadata and file list. A hash genuinely absent from a successfully retrieved TorrServer inventory remains eligible for normal source-disappearance cleanup.
+- Keep deterministic permanent skips distinct from transient failures. In particular, a valid inventory entry with no playable video files (for example, the known Blu-ray ISO case) must not generate a guessed output tree; define and test its explicit disposition so preservation for transient quality failures does not become indefinite retention of invalid media.
+- Preserve the existing output safety contract: Kodi remains read-only with respect to TorrServer, `action=drop` is never used, and Jellyfin path/grouping behavior is not redesigned.
+
+**Regression tests**
+
+- Same trusted series ID appears in multiple seasons/releases with years 2021 and 2022: the canonical directory consistently uses 2021 regardless of input order, which releases are quality-ready, and whether releases are assigned to different quality roots.
+- Temporarily unresolved quality for one release does not rename the shared series directory, move healthy episode links between year-named directories, or remove the previous managed files/manifest records for that still-present hash.
+- Recovery after quality resolution succeeds reconciles the torrent normally; a hash genuinely absent from a successful source inventory is still cleaned up.
+- A permanent no-playable-video skip creates no speculative STRM tree and follows the explicit skip/retention policy; Kodi never triggers TorrServer deletion.
+- Repeat sync after recovery is idempotent and leaves canonical paths unchanged.
+
+**Exit criteria**
+
+- The canonical Kodi series title/year is deterministic over the complete available inventory and cannot fluctuate solely because `quality_ready` membership changes.
+- A torrent still present in a valid TorrServer inventory cannot lose previously managed output solely because quality resolution failed for that run.
+- Temporary unresolved quality, permanent non-playable skips, global inventory failures, and confirmed source disappearance have distinct, tested reconciliation semantics.
+- Automated regressions pass and a reference mini-PC dry run confirms stable Kodi paths and manifests before `torr2strm.timer` is re-enabled.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -420,6 +453,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [ ] Phase 10 — Deferred: add backward-compatible orchestration/check/report interface for torr2jellyfin (not part of v1.4.8 by decision)
 - [x] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 published and accepted on the mini-PC 2026-10-22; see delivery-verification note below)
 - [ ] Phase 14 — Decouple NFO content/schema versioning from the application release version. An application-version-only bump must not rewrite NFO files; an intentional `NFO_FORMAT_VERSION` change must invalidate/update NFOs. Add regression tests for both behaviors (identified 2026-10-22; implementation pending)
+- [ ] Phase 15 — Stabilize canonical Kodi series title/year using all available inventory snapshots and preserve output for in-inventory torrents with transient quality-resolution failures; test recovery and true source disappearance separately (identified 2026-10-23; implementation pending)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
