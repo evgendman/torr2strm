@@ -36,7 +36,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.11"
+VERSION = "1.4.12"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
