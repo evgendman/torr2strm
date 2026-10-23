@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.9 is published and accepted on the reference mini-PC (2026-10-22).** The multi-disc Lexx VOB filename collisions are resolved using the short torrent hash plus exact TorrServer `file_id`; 22 unique Jellyfin STRM files were verified. The real sync and a follow-up dry run passed, with 304 outputs unchanged on the repeat run, and the systemd timer has been restored. One known `QUALITY_SKIP` remains for a Blu-ray ISO with no video files; this is separate from collision handling. A follow-up usability fix is being prepared as v1.4.10 after Telegram warning messages showed 22 per-file collision records without naming the affected release; the patch will send one concise, title-bearing summary per torrent and retain full details in the local journal.
+> **v1.4.10 is published and accepted on the reference mini-PC (2026-10-22).** The collision-summary notification improvement is deployed. On 2026-10-23, a no-op sync was found to call `chmod` on existing STRM/NFO files and directories even when their permissions already matched the target mode. These redundant attribute changes update `ctime` and can trigger Jellyfin's filesystem watcher. `torr2strm.timer` was stopped after this diagnosis and must remain stopped until Phase 16 is implemented, regression-tested, and accepted on the mini-PC. Phases 14 and 15 remain pending; Phase 16 tracks the filesystem-event churn fix.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -420,6 +420,37 @@ The Kodi series directory changed between syncs from `The White Lotus (2021)` to
 - Temporary unresolved quality, permanent non-playable skips, global inventory failures, and confirmed source disappearance have distinct, tested reconciliation semantics.
 - Automated regressions pass and a reference mini-PC dry run confirms stable Kodi paths and manifests before `torr2strm.timer` is re-enabled.
 
+### Phase 16 — Prevent redundant permission changes from triggering Jellyfin filesystem events
+
+**Status: identified on the reference mini-PC on 2026-10-23; implementation and acceptance pending. Keep `torr2strm.timer` stopped.**
+
+**Problem and evidence**
+
+- Jellyfin's library monitor watches filesystem attribute changes in addition to file/directory creation, deletion, rename, write time, and size. A permission change can therefore emit a watched event even when file contents and modification time are unchanged.
+- In the installed source, `_write_strm()` and `_write_nfo()` call `os.chmod(path, 0o666)` for existing files whose content already matches the planned content. `_mkdir()` calls `os.chmod(path, 0o777)` for existing directories. These calls are unconditional outside dry-run mode, even when the current permission bits already match the requested mode.
+- During the 2026-10-23 no-op run, the summary was `created=0 updated=0 unchanged=304 failed=1`. Representative series/season directories and existing NFOs had old `mtime` values but `ctime` values clustered around the run. This points to metadata-only churn rather than content or directory-tree changes.
+- `SeerrScan` log entries show downstream reactions after Jellyfin registers items; by themselves they do not prove that every event caused a full-library scan. The exact scan/refresh scope must be assessed in the controlled acceptance test.
+
+**Implementation**
+
+- In all three sites (`_write_strm()`, `_write_nfo()`, and `_mkdir()`), compare the current permission bits with the desired mode before calling `chmod`. Apply `chmod` only when they differ. Preserve target modes: `0666` for managed STRM/NFO files and `0777` for managed directories.
+- Keep normal file creation/content replacement, atomic writes, reconciliation, and output paths unchanged. This is a narrowly scoped filesystem-event fix, not a redesign of Jellyfin monitoring or of torr2strm synchronization.
+- Add regression tests for each of the three paths: no `chmod` when the target mode is already correct, and `chmod` still occurs when the mode differs and must be corrected.
+
+**Reference mini-PC validation**
+
+- Keep `torr2strm.timer` stopped throughout installation and preflight. Run the automated tests, compile/source/version checks and a dry run before the controlled live run.
+- Record permissions, `mtime`, and `ctime` for representative existing STRM/NFO files and series/season directories before and after a no-op live sync. When `created=0` and `updated=0`, verify that permissions remain correct and there is no broad `ctime` churn caused by repeated no-op `chmod` calls; content `mtime` should also remain unchanged.
+- Review Jellyfin watcher/library logs and the `SeerrScan` log messages around that single run. Distinguish incremental item refreshes from any full-library scan instead of assuming the scope from `SeerrScan` messages alone.
+- Do not re-enable `torr2strm.timer` until the patch, regressions, no-op sync and Jellyfin/SeerrScan observation pass. Then re-enable it deliberately and verify one scheduled run succeeds.
+
+**Exit criteria**
+
+- Automated tests cover all three call sites and pass in CI.
+- Correct permission bits are retained without invoking `chmod`; incorrect bits are repaired.
+- A reference mini-PC no-op sync with no created/updated outputs causes no mass metadata-only timestamp churn in existing managed paths.
+- The remaining Jellyfin scan/refresh behavior is documented based on observed logs, and the timer is only restored after acceptance.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -454,10 +485,11 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 published and accepted on the mini-PC 2026-10-22; see delivery-verification note below)
 - [ ] Phase 14 — Decouple NFO content/schema versioning from the application release version. An application-version-only bump must not rewrite NFO files; an intentional `NFO_FORMAT_VERSION` change must invalidate/update NFOs. Add regression tests for both behaviors (identified 2026-10-22; implementation pending)
 - [ ] Phase 15 — Stabilize canonical Kodi series title/year using all available inventory snapshots and preserve output for in-inventory torrents with transient quality-resolution failures; test recovery and true source disappearance separately (identified 2026-10-23; implementation pending)
+- [ ] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files and existing directories; add permission-mode regression tests and perform controlled no-op sync/Jellyfin watcher acceptance (identified 2026-10-23; implementation pending; timer intentionally stopped)
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
-The v1.4.9 release is published and the collision fix is accepted on the reference mini-PC. v1.4.10 is now also installed and accepted on the reference mini-PC as of 2026-10-22. The live sync completed successfully (`torrents=153 quality_ready=152 quality_unresolved=1 created=0 updated=154 unchanged=150 failed=1`); the one skipped item is the known Blu-ray ISO with no video files. The follow-up dry run reported `created=0 updated=0 unchanged=304 failed=1`, with no unresolved STRM collision. The timer was restored to `active` and `enabled`, and its immediate service run completed with `Result=success`, exit status 0 and 304 unchanged outputs. The service's configured TorrServer API is `127.0.0.1:8092`; a separate process also listens on 8097. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer remain available.
+The v1.4.9 release is published and the collision fix is accepted on the reference mini-PC. v1.4.10 is also installed and was accepted on 2026-10-22. At that acceptance point, the live sync completed (`torrents=153 quality_ready=152 quality_unresolved=1 created=0 updated=154 unchanged=150 failed=1`); the one skipped item was the known Blu-ray ISO with no video files. The follow-up dry run reported `created=0 updated=0 unchanged=304 failed=1`, with no unresolved STRM collision, and the timer-triggered service run succeeded. On 2026-10-23, a later no-op run reported `torrents=153 quality_ready=152 quality_unresolved=1 created=0 updated=0 unchanged=304 failed=1`. Despite no STRM/NFO content updates (`mtime` remained older), sampled existing series/season directories and NFO files showed `ctime` changes clustered around that run, consistent with the unconditional `chmod` calls described in Phase 16. The timer is currently stopped pending that fix and mini-PC acceptance; do not re-enable it before the exit criteria in Phase 16 are met. The service's configured TorrServer API is `127.0.0.1:8092`; a separate process also listens on 8097. Phase 12 preserves the existing Jellyfin directory-building behavior and changes only filenames when destination paths collide. Phase 10 remains intentionally deferred and is not a dependency of standalone torr2strm. Existing CLI, TOML configuration semantics, systemd oneshot service and timer remain available.
 
 
 ## 8. Collision-safe Jellyfin filenames (v1.4.9)
