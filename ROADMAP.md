@@ -1,6 +1,6 @@
 # torr2strm Development Roadmap
 
-> **v1.4.12 was published and installed on the reference mini-PC on 2026-10-23.** GitHub Actions passed compilation and 49 regression tests. The controlled mini-PC sync verified the Kodi TV canonical-directory migration for all 10 episodes, preserved every STRM payload, and a second live run reported `created=0 updated=0 unchanged=304 failed=1` with no path, mode, `mtime`, or `ctime` changes across 3,401 inspected filesystem objects. Phases 14 and 15 passed their core acceptance checks. Phase 16's no-op filesystem acceptance passed; review of Jellyfin watcher/library logs remains outstanding. The sampled log lines show periodic Webhook notifier completion, but do not establish repeated media additions or a full-library scan., so `torr2strm.timer` is still disabled. Phase 10, the separate torr2jellyfin orchestration interface, remains deferred.
+> **v1.4.12 was published, installed, and accepted on the reference mini-PC on 2026-10-23.** GitHub Actions passed compilation and 49 regression tests. The controlled mini-PC sync verified the Kodi TV canonical-directory migration for all 10 episodes, preserved every STRM payload, and a second live run reported `created=0 updated=0 unchanged=304 failed=1` with no path, mode, `mtime`, or `ctime` changes across 3,401 inspected filesystem objects. Phases 14–16 are accepted for the tested scenarios. Jellyfin log review for 12:10–12:39 showed periodic Webhook notifier completion roughly every 91 seconds, with no explicit scan/refresh/watcher entries in the filtered lines; the dashboard showed the last full-library scan about four hours earlier (duration about one minute). This is reasonable acceptance evidence, not proof that no incremental refresh occurred. The timer was still disabled at the last host check and must now be re-enabled explicitly. Phase 10, the separate torr2jellyfin orchestration interface, remains deferred.
 > Baseline: prior implementation `v1.4.0`.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -422,7 +422,7 @@ The Kodi series directory changed between syncs from `The White Lotus (2021)` to
 
 ### Phase 16 — Prevent redundant permission changes from triggering Jellyfin filesystem events
 
-**Status: identified on the reference mini-PC on 2026-10-23; implementation and acceptance pending. Keep `torr2strm.timer` stopped.**
+**Status: implemented in v1.4.12 and accepted on the reference mini-PC on 2026-10-23 for the tested scenarios.**
 
 **Permission-policy decision**
 
@@ -443,17 +443,17 @@ Keep the current explicit per-object mode policy: `0666` for managed files and `
 
 **Reference mini-PC validation**
 
-- Keep `torr2strm.timer` stopped throughout installation and preflight. Run the automated tests, compile/source/version checks and a dry run before the controlled live run.
-- Record permissions, `mtime`, and `ctime` for representative existing STRM/NFO files and series/season directories before and after a no-op live sync. When `created=0` and `updated=0`, verify that permissions remain correct and there is no broad `ctime` churn caused by repeated no-op `chmod` calls; content `mtime` should also remain unchanged.
-- Review Jellyfin watcher/library logs around that single run. Distinguish incremental item refreshes from any full-library scan using explicit evidence; periodic Webhook notifier completion alone is not evidence of additions or a library scan.
-- Do not re-enable `torr2strm.timer` until the patch, regressions, no-op sync and Jellyfin watcher/library log review pass. Then re-enable it deliberately and verify one scheduled run succeeds.
+- The timer remained stopped during installation, preflight, dry run, and controlled sync. Source/version checks and the pre-release CI checks passed.
+- The second live sync reported `created=0 updated=0 unchanged=304 failed=1`; a snapshot comparison across 3,401 filesystem objects found no added/missing paths, timestamp/type changes, or permission corrections.
+- Jellyfin logs for 12:10–12:39 showed periodic Webhook notifier completions roughly every 91 seconds, but no explicit scan/refresh/watcher entries in the filtered lines. The dashboard showed the last full-library scan was about four hours earlier and took about one minute. This is adequate practical evidence for acceptance, while not proving that no incremental refresh happened.
+- Phase 16 is accepted for the tested scenarios. Re-enable `torr2strm.timer` deliberately and verify that the next scheduled service run succeeds.
 
 **Exit criteria**
 
-- Automated tests cover all three call sites and pass in CI.
-- Correct permission bits are retained without invoking `chmod`; incorrect bits are repaired.
-- A reference mini-PC no-op sync with no created/updated outputs causes no mass metadata-only timestamp churn in existing managed paths.
-- The remaining Jellyfin scan/refresh behavior is documented based on observed logs, and the timer is only restored after acceptance.
+- [x] Automated tests cover all three call sites and pass in CI.
+- [x] Correct permission bits are retained without invoking `chmod`; incorrect bits are repaired.
+- [x] A reference mini-PC no-op sync with no created/updated outputs caused no mass metadata-only timestamp churn in existing managed paths.
+- [x] Jellyfin scan/refresh evidence was reviewed and the version accepted for the tested scenarios; limitations of the log evidence are documented.
 
 ## 5. Explicit non-goals
 
@@ -489,7 +489,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 13 — Make Apprise collision warnings actionable with release titles, affected-file counts and representative source paths (v1.4.10 published and accepted on the mini-PC 2026-10-22; see delivery-verification note below)
 - [x] Phase 14 — Decouple NFO content/schema versioning from the application release version. GitHub regression tests passed; v1.4.12 controlled live sync and the subsequent no-op run passed on the mini-PC on 2026-10-23. NFO format remains v3, and no application-version-only NFO rewrites or no-op metadata churn were observed.
 - [x] Phase 15 — Stabilize canonical Kodi TV series title/year using all available inventory snapshots, without changing movie naming; preserve output for in-inventory torrents with transient quality-resolution failures and distinguish recovery from true source disappearance. GitHub regressions passed in v1.4.12; on 2026-10-23 the mini-PC dry run and live migration confirmed 10 episode STRMs moved to the canonical `Widow's Bay (2026)` path with identical contents, no planned movie-path removals, and a verified Kodi manifest. A second run was idempotent.
-- [ ] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. GitHub regression tests and the reference mini-PC no-op acceptance passed on 2026-10-23: second run `created=0 updated=0 unchanged=304 failed=1`; no file/directory additions, removals, mode, `mtime`, or `ctime` changes across 3,401 inspected objects. Remaining exit criterion: review Jellyfin watcher/library logs around the controlled live run. The observed periodic Webhook notifier completion messages alone do not establish repeated additions or a full-library scan. Keep timer disabled until that review is complete.
+- [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
