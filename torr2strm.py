@@ -2080,8 +2080,13 @@ class OutputRunner:
             combination_url=_nfo_combination_url("tvshow", ids.get("tmdb")),
         )
 
-    def _prepare_kodi_components(self, snapshots: dict[str, TorrentSnapshot]) -> None:
-        """Choose canonical shared directory names and collision-safe short hashes for one sync."""
+    def _prepare_kodi_components(
+        self,
+        snapshots: dict[str, TorrentSnapshot],
+        naming_snapshots: dict[str, TorrentSnapshot] | None = None,
+    ) -> None:
+        """Build ready output paths using canonical titles/years from all usable inventory items."""
+        naming_snapshots = naming_snapshots or snapshots
         self.kodi_dirname_by_hash: dict[str, str] = {}
         self.kodi_display_title_by_hash: dict[str, str] = {}
         self.kodi_identity_by_hash: dict[str, str | None] = {}
@@ -2099,6 +2104,37 @@ class OutputRunner:
                 for h in hashes:
                     self.kodi_hash_by_torrent[h] = h[:length]
 
+        # Canonical naming is a property of logical identity, not current quality
+        # readiness or quality root. Preserve useful title/year metadata from
+        # playable inventory items even if technical-quality resolution failed.
+        identity_candidates: dict[
+            tuple[str, str], list[tuple[int, str, str | None, str]]
+        ] = {}
+        for h, snap in naming_snapshots.items():
+            if snap.category not in {"tv", "movie"}:
+                continue
+            identity = media_logical_identity(snap)
+            if not identity:
+                continue
+            title, year, priority = explicit_display_title(snap, tv=snap.category == "tv")
+            identity_candidates.setdefault((snap.category, identity), []).append(
+                (priority, title, year, h)
+            )
+
+        canonical_by_identity: dict[tuple[str, str], tuple[str, str | None]] = {}
+        for key, candidates in identity_candidates.items():
+            candidates.sort(
+                key=lambda item: (item[0], item[1].casefold(), item[1], item[3])
+            )
+            title = candidates[0][1]
+            years = {
+                item[2]
+                for item in candidates
+                if item[2] and re.fullmatch(r"(?:19|20)\d{2}", item[2])
+            }
+            year = min(years, key=lambda value: (int(value), value)) if years else None
+            canonical_by_identity[key] = (title, year)
+
         grouped: dict[tuple[str, str, str], list[tuple[int, str, str | None, str]]] = {}
         fallback: dict[tuple[str, str, str], list[str]] = {}
         for h, snap in snapshots.items():
@@ -2106,8 +2142,15 @@ class OutputRunner:
             identity = media_logical_identity(snap) if snap.category in {"tv", "movie"} else None
             self.kodi_identity_by_hash[h] = identity
             if identity:
-                title, year, priority = explicit_display_title(snap, tv=snap.category == "tv")
-                grouped.setdefault((snap.category, quality_root, identity), []).append((priority, title, year, h))
+                _, _, priority = explicit_display_title(snap, tv=snap.category == "tv")
+                title, year = canonical_by_identity.get(
+                    (snap.category, identity),
+                    explicit_display_title(snap, tv=snap.category == "tv")[:2],
+                )
+                self.kodi_display_title_by_hash[h] = title
+                grouped.setdefault((snap.category, quality_root, identity), []).append(
+                    (priority, title, year, h)
+                )
             else:
                 # Unidentified TV/movie torrents and unsupported categories retain
                 # their own torrent-title directory and original inner hierarchy.
@@ -2115,15 +2158,15 @@ class OutputRunner:
                 fallback.setdefault((snap.category, quality_root, name.casefold()), []).append(h)
                 self.kodi_display_title_by_hash[h] = name
 
-        # The same known logical ID always gets one canonical display name, even
-        # when release titles and internal torrent folder names differ.
+        # One directory per identity and quality root, using one canonical year/name
+        # selected over all available releases of that identity.
         base_components: dict[tuple[str, str, str], tuple[str, str | None]] = {}
         for key, candidates in grouped.items():
-            candidates.sort(key=lambda item: (item[0], item[1].casefold(), item[2] or "", item[3]))
+            candidates.sort(
+                key=lambda item: (item[0], item[1].casefold(), item[1], item[3])
+            )
             _, title, year, _ = candidates[0]
             base_components[key] = (title, year)
-            for _, _, _, h in candidates:
-                self.kodi_display_title_by_hash[h] = title
 
         raw_components: dict[tuple[str, str, str], str] = {}
         collisions: dict[tuple[str, str, str], set[str]] = {}
@@ -2147,9 +2190,8 @@ class OutputRunner:
                 component = bounded_kodi_component(component, identity=identity)
             for _, _, _, h in grouped[key]:
                 self.kodi_dirname_by_hash[h] = component
-            # A shared tvshow.nfo must be stable across all releases. Store only
-            # the canonical logical provider ID selected for this series rather
-            # than whichever episode torrent happens to sync last.
+            # A shared tvshow.nfo uses a deterministic representative among the
+            # quality-ready releases in this root, not an unresolved snapshot.
             if category == "tv":
                 canonical_hash = grouped[key][0][3]
                 self.kodi_series_canonical_ids[key] = provider_ids_for_snapshot(snapshots[canonical_hash])
@@ -2666,11 +2708,22 @@ class OutputRunner:
                     break
                 parent = parent.parent
 
-    def run(self, snapshots: dict[str, TorrentSnapshot], old_manifest: dict[str, Any], media_by_hash: dict[str, dict[int, dict[str, Any]]], media_sources_by_hash: dict[str, dict[int, str]], cached_nfo_by_hash: dict[str, dict[int, str]], *, skip_hashes: set[str], deferred_hashes: set[str] | None = None) -> tuple[int, int, int, int]:
+    def run(
+        self,
+        snapshots: dict[str, TorrentSnapshot],
+        old_manifest: dict[str, Any],
+        media_by_hash: dict[str, dict[int, dict[str, Any]]],
+        media_sources_by_hash: dict[str, dict[int, str]],
+        cached_nfo_by_hash: dict[str, dict[int, str]],
+        *,
+        skip_hashes: set[str],
+        deferred_hashes: set[str] | None = None,
+        naming_snapshots: dict[str, TorrentSnapshot] | None = None,
+    ) -> tuple[int, int, int, int]:
         deferred_hashes = deferred_hashes or set()
         self.prepare_root()
         if self.spec.name == "kodi":
-            self._prepare_kodi_components(snapshots)
+            self._prepare_kodi_components(snapshots, naming_snapshots=naming_snapshots)
         old_records = old_manifest.get("torrents", {})
         if not isinstance(old_records, dict):
             raise RuntimeError(f"manifest.torrents must be object for output {self.spec.name}")
@@ -2877,26 +2930,49 @@ class SyncCoordinator:
         media_sources_by_hash: dict[str, dict[int, str]] = {}
         cached_nfo_by_hash: dict[str, dict[int, str]] = {}
         quality_ready: dict[str, TorrentSnapshot] = {}
+        quality_deferred_hashes: set[str] = set()
+        permanent_skip_hashes: set[str] = set()
         unresolved = 0
         resolver = MediaInfoResolver(self.cfg, manifests)
         for h, snap in snapshot_map.items():
-            old_union = None
             # Quality/state comes from either output manifest; the resolver searches exact source_path NFOs itself.
             required = self._collect_required_files(snap)
             if not required:
-                LOG.error("QUALITY_SKIP hash=%s title=%r error=no video files", h, snap.title)
+                # No playable video is a permanent, deterministic skip. Do not
+                # retain old managed output forever as if the source were transiently unreadable.
+                permanent_skip_hashes.add(h)
+                LOG.error(
+                    "QUALITY_SKIP hash=%s title=%r reason=no_playable_video_files disposition=cleanup_managed_outputs",
+                    h, snap.title,
+                )
                 unresolved += 1
                 continue
             try:
                 quality, quality_label, probes, sources, cached = resolver.prepare(snap, required)
             except Exception as exc:
-                LOG.error("QUALITY_SKIP hash=%s title=%r error=%s", h, snap.title, exc)
+                # Inventory/identity is readable, but this run cannot reliably
+                # classify/materialize it. Preserve old outputs and retry next run.
+                quality_deferred_hashes.add(h)
+                LOG.error(
+                    "QUALITY_DEFERRED hash=%s title=%r error=%s retry=next_run preserve_existing_output=true",
+                    h, snap.title, str(exc).replace("\\n", " ")[:500],
+                )
                 unresolved += 1
                 continue
             media_by_hash[h] = probes
             media_sources_by_hash[h] = sources
             cached_nfo_by_hash[h] = cached
             quality_ready[h] = replace(snap, quality=quality, quality_label=quality_label)
+
+        # Canonical Kodi names may use all successfully parsed snapshots with
+        # playable video, including an item with temporary quality-resolution failure.
+        # Output and tvshow.nfo representatives still come only from quality_ready.
+        naming_snapshots = {
+            h: quality_ready.get(h, snap)
+            for h, snap in snapshot_map.items()
+            if h not in permanent_skip_hashes
+        }
+        retained_hashes = set(deferred_hashes) | quality_deferred_hashes
 
         removed_hashes: set[str] = set()
         totals = {"created": 0, "updated": 0, "unchanged": 0, "failed": unresolved + len(deferred_hashes)}
@@ -2910,7 +2986,8 @@ class SyncCoordinator:
                 media_sources_by_hash,
                 cached_nfo_by_hash,
                 skip_hashes=removed_hashes,
-                deferred_hashes=deferred_hashes,
+                deferred_hashes=retained_hashes,
+                naming_snapshots=naming_snapshots,
             )
             totals["created"] += created
             totals["updated"] += updated
