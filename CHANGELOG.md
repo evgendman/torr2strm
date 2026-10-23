@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.11
+
+- Decouple generated NFO output from the application release version; upgrades that change only the app version must not rewrite existing sidecars. Actual NFO content and `NFO_FORMAT_VERSION` changes still trigger updates.
+- Stabilize canonical Kodi series name/year from all parsed playable inventory snapshots for a trusted identity, independent of quality-root and quality-resolution readiness; choose the earliest valid year deterministically.
+- Preserve previous output files and manifest records when quality resolution fails temporarily for a torrent that is still in the source inventory. A truly absent torrent is cleaned up normally; a source entry with no playable video is handled as a permanent skip and old managed output is cleaned up.
+- Apply `chmod` only when the current permission bits differ from the target, including output roots and manifest directories. Preserve maximally permissive target modes: `0666` for files and `0777` for directories.
+- Add regressions for NFO version semantics, canonical series years across quality roots, temporary quality failure/recovery, true source disappearance, permanent no-video cleanup, and permission-mode corrections.
+- No manifest schema bump, NFO format bump, clean rebuild, external metadata integration, or torr2jellyfin/Jellyfin-plugin orchestration integration.
+
+## 1.4.10
+
 ## 1.4.10
 
 - Make Apprise collision warnings actionable: each collision-bearing torrent now produces one summary with the release title, full hash, affected-file counts and representative source paths.
