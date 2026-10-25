@@ -455,6 +455,41 @@ Keep the current explicit per-object mode policy: `0666` for managed files and `
 - [x] A reference mini-PC no-op sync with no created/updated outputs caused no mass metadata-only timestamp churn in existing managed paths.
 - [x] Jellyfin scan/refresh evidence was reviewed and the version accepted for the tested scenarios; limitations of the log evidence are documented.
 
+### Phase 17 — Preserve category across metadata reloads and defer uncertain category changes
+
+**Status: planned.** Triggered by the Baywatch (1989) directory churn observed on the reference mini-PC on 2026-10-25. The missing fallback in the post-metadata-reload code path is confirmed; the historical category value returned by TorrServer during the incident was not logged, so a transient TorrServer-side category omission remains a hypothesis rather than a proven source-side fault.
+
+**Problem and evidence**
+
+- Two consecutive torr2strm runs, at approximately 11:07 and 11:12 +05, logged METADATA_LOAD and METADATA_READY for the same Baywatch S03 torrent hash.
+- In the first run, Jellyfin output moved that hash from tv/... to _uncategorized/... with reason=identity_changed. Kodi then removed 22 previously managed episode STRMs as unreferenced and pruned the empty Season 03 directory. The next run moved the same hash back to tv/... and recreated the season directory and episode links.
+- arr2torr reported candidates=0 and submitted=0 around the event; TorrServer's listed torrent count remained 271. These observations do not support a newly imported torrent as the trigger.
+- In _get_snapshot_list(), the ordinary action=get path falls back to the category from action=list when the detail response has no category (around the existing detail["category"] assignment). However, after load_torrent_metadata(), the refreshed action=get response is passed directly to parse_snapshot() without applying that fallback. parse_snapshot() maps an empty or unsupported category to _uncategorized. This gap can turn a temporary missing category into a real output-path change.
+- Current read-only queries returned category=tv for the Baywatch hash. They cannot establish what TorrServer returned during the two historical runs.
+
+**Implementation**
+
+- Retain the category from the original action=list item throughout per-torrent snapshot acquisition. Validate fallback values against the existing supported set (movie, tv); do not infer category from titles, file paths, external providers, or import provenance.
+- After the metadata-loading/retry loop obtains a refreshed action=get response, apply the same missing-category fallback before parse_snapshot(). Use the refreshed response when it supplies a supported category; use the validated list category only when the refreshed category is absent or blank. Do not silently overwrite an explicit unsupported category with a different category.
+- If neither response supplies a trusted category and the hash already has a managed manifest record with a trusted movie/tv category, treat the category as temporarily unresolved for that run. Defer that hash and preserve its previous manifest records and output files instead of moving it to _uncategorized or cleaning up its old paths. Reconcile normally when a trusted category becomes available again.
+- Keep the existing policy for explicit unsupported categories: they map to _uncategorized; do not add title-based guesses or external category enrichment.
+- Add concise diagnostics that distinguish list-category fallback, refreshed-response category, and category-unresolved deferral, without dumping full torrent metadata into logs. Ensure a deferred category cannot be mistaken for a confirmed source disappearance.
+
+**Regression tests**
+
+- A torrent whose list entry has category=tv, whose initial action=get has no FileStats, and whose post-load response has FileStats but no category retains tv and its normalized Kodi/Jellyfin paths.
+- The same fallback behavior works for movie; a supported category returned by the refreshed detail response takes precedence over the fallback.
+- An explicitly unsupported category remains _uncategorized; category is never guessed from the title or file tree.
+- When all category responses are missing and a previous manifest record has a trusted category, both output manifests and managed files are retained for that run. A later valid response recovers normally; a hash genuinely absent from a successfully retrieved inventory still follows normal source-disappearance cleanup.
+- A repeat sync after recovery is idempotent and does not emit a spurious RENAME ... reason=identity_changed.
+
+**Exit criteria**
+
+- All new regressions and the complete existing test suite pass in GitHub Actions.
+- A reference mini-PC dry run proves that the valid list-category fallback prevents the Baywatch-style tv → _uncategorized migration when the refreshed response omits category.
+- A controlled validation confirms that unresolved category metadata preserves existing managed output and manifest state, while explicitly unsupported categories and genuine source disappearance retain their defined behavior.
+- A subsequent no-op run creates no unnecessary directory/file churn; only then is the fix accepted for the tested scenarios.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -490,6 +525,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 14 — Decouple NFO content/schema versioning from the application release version. GitHub regression tests passed; v1.4.12 controlled live sync and the subsequent no-op run passed on the mini-PC on 2026-10-23. NFO format remains v3, and no application-version-only NFO rewrites or no-op metadata churn were observed.
 - [x] Phase 15 — Stabilize canonical Kodi TV series title/year using all available inventory snapshots, without changing movie naming; preserve output for in-inventory torrents with transient quality-resolution failures and distinguish recovery from true source disappearance. GitHub regressions passed in v1.4.12; on 2026-10-23 the mini-PC dry run and live migration confirmed 10 episode STRMs moved to the canonical `Widow's Bay (2026)` path with identical contents, no planned movie-path removals, and a verified Kodi manifest. A second run was idempotent.
 - [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
+- [ ] Phase 17 — Preserve validated TorrServer category across the post-FileStats metadata reload; defer unresolved category transitions to prevent destructive _uncategorized path migrations; add category-source diagnostics and regression/mini-PC acceptance tests. Planned after the Baywatch (1989) identity_changed incident on 2026-10-25; source-side category omission remains unconfirmed.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
