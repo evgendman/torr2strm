@@ -492,7 +492,7 @@ Keep the current explicit per-object mode policy: `0666` for managed files and `
 
 ### Phase 18 — Structured, user-facing Apprise notifications
 
-**Status: planned.** Implement after the accepted v1.4.12 baseline; preserve current media-tree, manifest, NFO, TorrServer-removal, and Apprise gateway contracts.
+**Status: implemented in v1.4.13; 51 local regression tests pass. Reference mini-PC deployment acceptance remains pending.** The implementation preserves current media-tree, manifest, NFO, TorrServer-removal, and Apprise gateway contracts.
 
 **Problem**
 
@@ -555,7 +555,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 15 — Stabilize canonical Kodi TV series title/year using all available inventory snapshots, without changing movie naming; preserve output for in-inventory torrents with transient quality-resolution failures and distinguish recovery from true source disappearance. GitHub regressions passed in v1.4.12; on 2026-10-23 the mini-PC dry run and live migration confirmed 10 episode STRMs moved to the canonical `Widow's Bay (2026)` path with identical contents, no planned movie-path removals, and a verified Kodi manifest. A second run was idempotent.
 - [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
 - [ ] Phase 17 — Preserve validated TorrServer category across the post-FileStats metadata reload; defer unresolved category transitions to prevent destructive _uncategorized path migrations; add category-source diagnostics and regression/mini-PC acceptance tests. Planned after the Baywatch (1989) identity_changed incident on 2026-10-25; source-side category omission remains unconfirmed.
-- [ ] Phase 18 — Replace raw-log Apprise forwarding with structured, plain-language notifications grouped by problem type and media; preserve technical diagnostics locally, explain retry/impact, improve TorrServer failure causes, and add regression coverage for grouping, title fallback, deduplication, severity, and message limits.
+- [ ] Phase 18 — Implemented in v1.4.13 with 51 local tests passing: replace raw-log Apprise forwarding with structured, plain-language notifications grouped by problem type and media; preserve technical diagnostics locally, explain retry/impact, and improve TorrServer failure causes. Pending GitHub CI and reference mini-PC acceptance.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
