@@ -1,6 +1,6 @@
 # Current state
 
-Software version: 1.4.13 candidate (structured Apprise notifications implemented; 51 local tests pass; GitHub CI and reference mini-PC acceptance pending).
+Software version: 1.4.13 candidate (structured Apprise notifications implemented; 53 local tests pass; GitHub CI and reference mini-PC acceptance pending).
 Manifest schema: v5.
 NFO format: v3.
 
@@ -42,4 +42,4 @@ The v1.4.11 reference mini-PC dry run on 2026-10-23 reported `created=0 updated=
 
 ## v1.4.13 — structured Apprise notifications
 
-The candidate separates user-facing Apprise summaries from diagnostic log lines. Notifications are grouped by problem type and media/release title, use inventory titles even when a later TorrServer request fails, distinguish known source failure classes, explain retry/output preservation, and keep technical details in the journal. Successful directory cleanup and intermediate list-metadata fallback warnings are excluded from user-facing alerts. Local compile and 51-test suite passed on the reference mini-PC's Python runtime. No live install or media-tree changes have been performed from this candidate yet.
+The candidate separates user-facing Apprise summaries from diagnostic log lines. Notifications are grouped by problem type and media/release title, use inventory titles even when a later TorrServer request fails, distinguish known source failure classes, explain retry/output preservation, and keep technical details in the journal. Successful directory cleanup and intermediate list-metadata fallback warnings are excluded from user-facing alerts. Local compile and 53-test suite passed on the reference mini-PC's Python runtime. No live install or media-tree changes have been performed from this candidate yet.
