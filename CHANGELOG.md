@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Restore the monotonic systemd timer schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) after reviewing the 2026-10-27 evidence: the `NEXT=-` snapshot was captured while the Type=oneshot service was still running, and no post-completion snapshot established a re-arming failure. Keep `RandomizedDelaySec=15s` and `AccuracySec=1s`. Host-side restoration still requires verification once MINI-Ubuntu is reachable. No Python, manifest schema, or NFO format change.
+- Restore the monotonic systemd timer schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) after reviewing the 2026-10-27 evidence: the `NEXT=-` snapshot was captured while the Type=oneshot service was still running, and no post-completion snapshot established a re-arming failure. Keep `RandomizedDelaySec=15s` and `AccuracySec=1s`. Applied on reference MINI-Ubuntu on 2026-10-27; `systemd-analyze verify` passed, the timer is active/enabled, and post-run inspection confirmed the service exited 0 at 22:42:57 +05 (`torrents=431 quality_ready=431 quality_unresolved=0 created=0 updated=0 unchanged=862 failed=0`) while the timer remained armed for 22:45:20 +05. `NEXT=-` during an active oneshot run is not by itself evidence of a timer failure. No Python, manifest schema, or NFO format change.
 
 ## 1.4.14
 
