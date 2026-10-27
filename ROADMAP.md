@@ -490,6 +490,35 @@ Keep the current explicit per-object mode policy: `0666` for managed files and `
 - A controlled validation confirms that unresolved category metadata preserves existing managed output and manifest state, while explicitly unsupported categories and genuine source disappearance retain their defined behavior.
 - A subsequent no-op run creates no unnecessary directory/file churn; only then is the fix accepted for the tested scenarios.
 
+### Phase 18 — Structured, user-facing Apprise notifications
+
+**Status: planned.** Implement after the accepted v1.4.12 baseline; preserve current media-tree, manifest, NFO, TorrServer-removal, and Apprise gateway contracts.
+
+**Problem**
+
+Apprise currently forwards most captured `WARNING` and `ERROR` log lines directly. Exact-string deduplication is not semantic grouping: a single problem affecting multiple files or torrents appears as multiple technical bullets, while different reasons may be collapsed into an unhelpful generic presentation. Some recoverable or successful operations are logged at warning level, and some exception messages omit the actual failure detail. The `TORRENT_DEFERRED` example can repeat the torrent hash as both `hash` and `reason` (notably when `action=get` returns HTTP 404), leaving the user unable to tell what happened.
+
+**Planned behavior**
+
+- Separate diagnostic logging from user-facing notification rendering. Preserve technical event codes, paths, hashes, file IDs, tracebacks, and detailed per-file records in the local journal; do not use raw log lines as the notification model.
+- Build structured notification events with an event type, severity, output tree, canonical torrent identity, media/release title when available, concise reason, consequence, and retry/next-action information where applicable.
+- Group events by problem type and media/torrent. Emit one plain-language description of the problem, followed by affected media; within a media block, list affected source files and conflicting destination names when relevant. Multiple distinct problems for the same media remain separate bullets under the same media heading.
+- Reuse inventory/list metadata to resolve torrent titles even when a later TorrServer request fails. Use the canonical hash as an explicit fallback when no reliable title is available; never invent a media name.
+- Preserve actionable causes for source failures. Distinguish at least HTTP 404/not-found, connection errors, timeouts, invalid responses/JSON, metadata/FileStats unavailability, and unknown errors. Do not allow an exception string that is only a hash to masquerade as the cause.
+- Make user-facing copy natural and explicit about outcome: temporarily deferred and retrying; output preserved; media skipped and managed output cleaned; collision safely resolved; or synchronization blocked by a path/write conflict. A successful cleanup or collision resolution must not be worded as a failed operation solely because its journal record uses `WARNING`.
+- Keep the existing severity routing (`warnings` and `critical` tags), Apprise HTTP payload contract, optional-notifications behavior, per-run aggregation, and suppression of unchanged notification fingerprints unless tests demonstrate a necessary compatibility fix.
+- Bound the message to the downstream chat channel's practical size. If content must be truncated, preserve group headings, media names, problem summaries, and a count of omitted items.
+- Update README notification documentation to describe the user-facing format and the diagnostic-journal split.
+
+**Regression coverage and acceptance**
+
+- Test each renderer/grouping rule with multiple torrents, multiple files for one media, multiple issue types for one media, and deterministic ordering.
+- Test title resolution and hash fallback when `action=get` fails, including HTTP 404, timeout, connection failure, and an exception whose text is only a hash.
+- Test that resolved STRM collisions produce one user-facing summary per torrent/output while per-file technical diagnostics remain in the journal; unresolved collisions remain critical and clearly identify the media and conflicting paths.
+- Test that successful removal/cleanup warnings are not presented as failures, while genuine write/path conflicts and fatal errors retain critical routing and useful context.
+- Test unchanged-fingerprint suppression, clean-run reset, message-size limits, and existing Apprise gateway fields/tags.
+- Run the full automated suite and CI. Before live acceptance, use a dry run or controlled fixtures and confirm existing STRM/NFO trees and manifests are unchanged by notification-only changes.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -526,6 +555,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 15 — Stabilize canonical Kodi TV series title/year using all available inventory snapshots, without changing movie naming; preserve output for in-inventory torrents with transient quality-resolution failures and distinguish recovery from true source disappearance. GitHub regressions passed in v1.4.12; on 2026-10-23 the mini-PC dry run and live migration confirmed 10 episode STRMs moved to the canonical `Widow's Bay (2026)` path with identical contents, no planned movie-path removals, and a verified Kodi manifest. A second run was idempotent.
 - [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
 - [ ] Phase 17 — Preserve validated TorrServer category across the post-FileStats metadata reload; defer unresolved category transitions to prevent destructive _uncategorized path migrations; add category-source diagnostics and regression/mini-PC acceptance tests. Planned after the Baywatch (1989) identity_changed incident on 2026-10-25; source-side category omission remains unconfirmed.
+- [ ] Phase 18 — Replace raw-log Apprise forwarding with structured, plain-language notifications grouped by problem type and media; preserve technical diagnostics locally, explain retry/impact, improve TorrServer failure causes, and add regression coverage for grouping, title fallback, deduplication, severity, and message limits.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
