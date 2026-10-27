@@ -1,8 +1,8 @@
 # Version model
 
-Software version: 1.4.12.
+Software version: 1.4.13 (candidate).
 
-v1.4.12 narrows canonical title/year selection to Kodi TV series. Movie directory naming remains unchanged from the prior per-quality-root policy; a regression guards this after the v1.4.11 mini-PC dry run exposed unplanned movie path reconciliation.
+v1.4.13 changes only Apprise notification rendering: raw log lines are transformed into user-facing summaries grouped by issue and media. Manifest schema and NFO format remain unchanged; prior v1.4.12 synchronization behavior is retained.
 
 Manifest schema: v5.
 

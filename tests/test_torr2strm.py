@@ -1185,15 +1185,17 @@ def test_apprise_notifications_use_shared_contract_and_suppress_unchanged_events
             warning_payload = next(p for p in payloads if p["type"] == "warning")
             error_payload = next(p for p in payloads if p["type"] == "failure")
             assert warning_payload["tag"] == "warnings"
-            assert "TORRENT_DEFERRED" in warning_payload["body"]
-            assert "STRM_COLLISION_SUMMARY" in warning_payload["body"]
+            assert "TorrServer пока не предоставил необходимые сведения" in warning_payload["body"]
+            assert "TORRENT_DEFERRED" not in warning_payload["body"]
+            assert "STRM_COLLISION_SUMMARY" not in warning_payload["body"]
             assert "Lexx (1997) Season 01 DVD collection" in warning_payload["body"]
-            assert "affected_files=22" in warning_payload["body"]
-            assert "DVD2/VTS_01_0.VOB" in warning_payload["body"]
-            assert "DVD3/VTS_01_0.VOB" in warning_payload["body"]
+            assert "У 22 файлов совпадали целевые имена" in warning_payload["body"]
+            assert "Season 1/DVD2/VTS_01_0.VOB" in warning_payload["body"]
+            assert "Season 1/DVD3/VTS_01_0.VOB" in warning_payload["body"]
             assert "STRM_COLLISION_RESOLVED" not in warning_payload["body"]
             assert error_payload["tag"] == "critical"
-            assert "ERROR output=jellyfin" in error_payload["body"]
+            assert "Не удалось синхронизировать медиа" in error_payload["body"]
+            assert "Раздача bbbbbbbb" in error_payload["body"]
             dispatch_run_notifications(cfg_data, capture)
             assert urlopen.call_count == 2
             dispatch_run_notifications(cfg_data, NotificationCapture())
@@ -1485,3 +1487,141 @@ def test_kodi_movie_names_remain_scoped_to_each_quality_root():
         assert (kr / "movie" / "4K" / "Zebra Film (2002)").is_dir()
         assert not (kr / "movie" / "1080p" / "Zebra Film (2002)").exists()
         assert not (kr / "movie" / "4K" / "Alpha Film (2001)").exists()
+
+
+def test_apprise_groups_torrent_failures_by_problem_and_media_and_explains_hash_only_404():
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg_data = cfg(base / "jelly", base / "kodi")
+        cfg_data["notifications"].update({
+            "enabled": True,
+            "apprise_url": "http://192.168.0.14:8000",
+            "apprise_config_key": "arr-stack",
+            "service_name": "torr2strm / MINI-Ubuntu",
+            "state_path": str(base / "notifications.json"),
+        })
+        capture = NotificationCapture()
+        missing_hash = "a" * 40
+        metadata_hash = "b" * 40
+        capture.register_title(missing_hash, "Definitely, Maybe (2008)")
+        capture.register_title(metadata_hash, "The Second Film (2024)")
+        capture.warnings.extend([
+            f"TORRENT_DEFERRED hash={missing_hash} stage=action_get reason={missing_hash} retry=next_run",
+            f"TORRENT_DEFERRED hash={metadata_hash} stage=metadata_wait reason=FileStats temporarily unavailable retry=next_run",
+        ])
+
+        with patch.object(torr2strm_module.urllib.request, "urlopen", return_value=Response()) as urlopen:
+            dispatch_run_notifications(cfg_data, capture)
+            assert urlopen.call_count == 1
+            payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+            body = payload["body"]
+            assert payload["tag"] == "warnings"
+            assert "Временно не удалось получить данные о раздачах" in body
+            assert body.count("Временно не удалось получить данные о раздачах") == 1
+            assert "Definitely, Maybe (2008)" in body
+            assert "The Second Film (2024)" in body
+            assert "HTTP 404" in body
+            assert "следующего запуска" in body.lower()
+            assert missing_hash not in body
+            assert metadata_hash not in body
+            assert "TORRENT_DEFERRED" not in body
+
+
+def test_apprise_does_not_forward_successful_cleanup_and_renders_exception_details():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg_data = cfg(base / "jelly", base / "kodi")
+        cfg_data["notifications"].update({
+            "enabled": True,
+            "apprise_url": "http://192.168.0.14:8000",
+            "apprise_config_key": "arr-stack",
+            "service_name": "torr2strm / MINI-Ubuntu",
+            "state_path": str(base / "notifications.json"),
+        })
+        capture = NotificationCapture()
+        cleanup = logging.LogRecord(
+            "torr2strm", logging.WARNING, __file__, 1,
+            "REMOVE-TREE output=%s hash=%s path=%s reason=%s",
+            ("jellyfin", "a" * 40, "movie/1080p/Old Film", "torrent_removed"),
+            None,
+        )
+        capture.emit(cleanup)
+        assert not capture.warnings
+
+        raw = "ERROR output=jellyfin hash=" + "b" * 40 + " title='Broken Film (2025)' operation=sync"
+        error = logging.LogRecord(
+            "torr2strm", logging.ERROR, __file__, 2, raw, (), None,
+        )
+        try:
+            raise PermissionError("permission denied while writing STRM")
+        except PermissionError:
+            import sys
+            error.exc_info = sys.exc_info()
+        capture.emit(error)
+        assert capture.warnings == []
+        assert capture.errors == [raw]
+        assert "PermissionError: permission denied while writing STRM" in capture.exception_details[raw]
+        body = torr2strm_module._render_notification_body(capture.errors, "errors", capture)
+        assert "Broken Film (2025)" in body
+        assert "Не удалось синхронизировать медиа" in body
+        assert "permission denied while writing STRM" in body
+        assert "ERROR output=jellyfin" not in body
+
+
+def test_torrserver_title_is_preserved_when_action_get_returns_not_found():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg_data = cfg(base / "jelly", base / "kodi")
+        h = "c" * 40
+
+        class ListedButUnavailable:
+            base_url = "http://127.0.0.1:8092"
+            def list_torrents(self):
+                return [{"Hash": h, "Title": "Definitely, Maybe (2008)", "Category": "movie", "Data": ""}]
+            def get_torrent(self, torrent_hash):
+                from torr2strm import TorrServerNotFound
+                raise TorrServerNotFound(torrent_hash)
+
+        capture = NotificationCapture()
+        logger = logging.getLogger("torr2strm")
+        logger.addHandler(capture)
+        try:
+            coordinator = SyncCoordinator(cfg_data, ListedButUnavailable(), dry_run=True, notification_capture=capture)
+            snapshots, deferred = coordinator._get_snapshot_list()
+        finally:
+            logger.removeHandler(capture)
+
+        assert snapshots == []
+        assert deferred == {h}
+        assert capture.torrent_titles[h] == "Definitely, Maybe (2008)"
+        assert any("reason_code=not_found" in event for event in capture.warnings)
+        body = torr2strm_module._render_notification_body(capture.warnings, "warnings", capture)
+        assert "Definitely, Maybe (2008)" in body
+        assert "HTTP 404" in body
+        assert h not in body
+
+
+def test_unresolved_collision_notification_includes_both_paths_and_hides_duplicate_sync_error():
+    capture = NotificationCapture()
+    h = "d" * 40
+    capture.register_title(h, "Lexx (1997) Season 01 DVD collection")
+    capture.errors.extend([
+        f"STRM_COLLISION_UNRESOLVED output=jellyfin title='Lexx (1997) Season 01 DVD collection' hash={h} destination=tv/1080p/Lexx/Season 01/VTS_01_0.VOB.strm source=DVD2/VIDEO_TS/VTS_01_0.VOB",
+        f"ERROR output=jellyfin hash={h} title='Lexx (1997) Season 01 DVD collection' operation=sync",
+    ])
+    raw_sync = capture.errors[1]
+    capture.exception_details[raw_sync] = "RuntimeError: unresolved STRM destination collision"
+    body = torr2strm_module._render_notification_body(capture.errors, "errors", capture)
+    assert "Lexx (1997) Season 01 DVD collection" in body
+    assert "Конфликт имён STRM не удалось разрешить" in body
+    assert "tv/1080p/Lexx/Season 01/VTS_01_0.VOB.strm" in body
+    assert "DVD2/VIDEO_TS/VTS_01_0.VOB" in body
+    assert "Не удалось синхронизировать медиа" not in body
+    assert "STRM_COLLISION_UNRESOLVED" not in body

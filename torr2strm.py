@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.11 - TorrServer-only STRM/NFO materialization.
+"""torr2strm 1.4.13 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
@@ -15,6 +15,7 @@ Key rules:
 from __future__ import annotations
 
 import argparse
+import ast
 import base64
 import hashlib
 import html
@@ -36,7 +37,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.12"
+VERSION = "1.4.13"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -2795,10 +2796,18 @@ class OutputRunner:
 
 
 class SyncCoordinator:
-    def __init__(self, cfg: dict[str, Any], client: TorrServerClient, *, dry_run: bool):
+    def __init__(
+        self,
+        cfg: dict[str, Any],
+        client: TorrServerClient,
+        *,
+        dry_run: bool,
+        notification_capture: NotificationCapture | None = None,
+    ):
         self.cfg = cfg
         self.client = client
         self.dry_run = dry_run
+        self.notification_capture = notification_capture
         self.outputs: list[OutputRunner] = []
         for name in ("jellyfin", "kodi"):
             raw = cfg["outputs"][name]
@@ -2826,7 +2835,12 @@ class SyncCoordinator:
             raw_hash = get_field(item, "hash", default=None)
             if not isinstance(raw_hash, str) or not raw_hash.strip():
                 raise TorrServerError("TorrServer list item has no hash")
-            inventory.append((item, canonical_hash(raw_hash)))
+            normalized_hash = canonical_hash(raw_hash)
+            inventory.append((item, normalized_hash))
+            if self.notification_capture is not None:
+                listed_title = get_field(item, "title", "name", default="")
+                if isinstance(listed_title, str) and listed_title.strip():
+                    self.notification_capture.register_title(normalized_hash, listed_title.strip())
 
         snapshots: list[TorrentSnapshot] = []
         deferred_hashes: set[str] = set()
@@ -2838,7 +2852,10 @@ class SyncCoordinator:
                     merged = dict(item)
                     merged.update(detail)
                     try:
-                        snapshots.append(parse_snapshot(merged, h))
+                        snapshot = parse_snapshot(merged, h)
+                        snapshots.append(snapshot)
+                        if self.notification_capture is not None:
+                            self.notification_capture.register_title(snapshot.hash, snapshot.title)
                         continue
                     except ValueError as exc:
                         LOG.warning(
@@ -2867,7 +2884,10 @@ class SyncCoordinator:
 
                 stage = "snapshot_parse"
                 try:
-                    snapshots.append(parse_snapshot(detail, h))
+                    snapshot = parse_snapshot(detail, h)
+                    snapshots.append(snapshot)
+                    if self.notification_capture is not None:
+                        self.notification_capture.register_title(snapshot.hash, snapshot.title)
                     continue
                 except ValueError as exc:
                     if "FileStats absent/empty" not in str(exc):
@@ -2882,7 +2902,10 @@ class SyncCoordinator:
                     stage = "metadata_wait"
                     try:
                         refreshed = self.client.get_torrent(h)
-                        snapshots.append(parse_snapshot(refreshed, h))
+                        snapshot = parse_snapshot(refreshed, h)
+                        snapshots.append(snapshot)
+                        if self.notification_capture is not None:
+                            self.notification_capture.register_title(snapshot.hash, snapshot.title)
                         LOG.info("METADATA_READY hash=%s", h)
                         break
                     except ValueError as exc:
@@ -2899,9 +2922,10 @@ class SyncCoordinator:
             except Exception as exc:
                 deferred_hashes.add(h)
                 reason = str(exc).replace("\n", " ").strip()[:500] or type(exc).__name__
+                reason_code = _source_failure_code(exc, stage, h)
                 LOG.warning(
-                    "TORRENT_DEFERRED hash=%s stage=%s reason=%s retry=next_run",
-                    h, stage, reason,
+                    "TORRENT_DEFERRED hash=%s stage=%s reason_code=%s error_type=%s reason=%s retry=next_run",
+                    h, stage, reason_code, type(exc).__name__, reason,
                 )
         return snapshots, deferred_hashes
 
@@ -3122,18 +3146,40 @@ def setup_logging(level: str) -> None:
 
 
 class NotificationCapture(logging.Handler):
-    """Collect warning/error records for aggregated Apprise messages."""
+    """Capture diagnostic records and context for user-facing Apprise summaries."""
 
     def __init__(self) -> None:
         super().__init__(level=logging.WARNING)
         self.warnings: list[str] = []
         self.errors: list[str] = []
+        self.torrent_titles: dict[str, str] = {}
+        self.exception_details: dict[str, str] = {}
+
+    def register_title(self, torrent_hash: str, title: str) -> None:
+        normalized_hash = canonical_hash(str(torrent_hash))
+        clean_title = str(title).replace("\r", " ").replace("\n", " ").strip()
+        if normalized_hash and clean_title:
+            self.torrent_titles[normalized_hash] = clean_title[:300]
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            message = record.getMessage()
-            if message.startswith(("APPRISE_", "STRM_COLLISION_RESOLVED ", "STRM_COLLISION_HASH_EXTENDED ")):
+            message = record.getMessage().replace("\r", " ").replace("\n", " ").strip()
+            # These are successful housekeeping actions, intermediate fallback
+            # diagnostics, delivery diagnostics, or deliberately detailed per-file
+            # collision entries. They remain in the local journal.
+            if message.startswith((
+                "APPRISE_",
+                "STRM_COLLISION_RESOLVED ",
+                "STRM_COLLISION_HASH_EXTENDED ",
+                "LIST_EMBEDDED_METADATA_UNUSABLE ",
+                "REMOVE-TREE ",
+                "INTERRUPTED ",
+            )):
                 return
+            if record.exc_info and record.exc_info[1] is not None:
+                exc = record.exc_info[1]
+                detail = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ").strip()
+                self.exception_details[message] = detail[:700]
             if record.levelno >= logging.ERROR:
                 self.errors.append(message)
             elif record.levelno >= logging.WARNING:
@@ -3144,6 +3190,447 @@ class NotificationCapture(logging.Handler):
 
 def _notification_events(values: list[str]) -> list[str]:
     return sorted({str(v).replace("\r", " ").replace("\n", " ").strip()[:500] for v in values if str(v).strip()})
+
+
+def _source_failure_code(exc: Exception, stage: str, torrent_hash: str) -> str:
+    """Classify recoverable TorrServer errors without leaking the hash as the cause."""
+    if isinstance(exc, TorrServerNotFound):
+        return "not_found"
+    message = str(exc).lower()
+    if "timed out" in message or "timeout" in message:
+        return "timeout"
+    if "cannot connect" in message or "connection refused" in message or "network is unreachable" in message:
+        return "connection"
+    if "invalid json" in message or "not an object" in message or "not an array" in message:
+        return "invalid_response"
+    if "http 404" in message or (stage == "action_get" and message.strip() == torrent_hash.lower()):
+        return "not_found"
+    if "http " in message:
+        return "http_error"
+    if "filestats" in message or "metadata" in message or "playlist" in message:
+        return "metadata_unavailable"
+    return "unknown"
+
+
+def _log_field(raw: str, name: str) -> str:
+    match = re.search(rf"(?:^|\s){re.escape(name)}=([^\s]+)", raw)
+    return match.group(1) if match else ""
+
+
+def _log_value_before(raw: str, name: str, next_name: str) -> str:
+    match = re.search(
+        rf"(?:^|\s){re.escape(name)}=(.*?)\s+{re.escape(next_name)}=",
+        raw,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _log_title(raw: str) -> str:
+    patterns = (
+        r"\btitle=(.+?)\s+hash=[0-9a-fA-F]{20,}\b",
+        r"\btitle=(.+?)\s+reason=",
+        r"\btitle=(.+?)\s+error=",
+        r"\btitle=(.+?)\s+retry=",
+        r"\btitle=(.+?)\s+operation=",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw)
+        if not match:
+            continue
+        candidate = match.group(1).strip()
+        try:
+            value = ast.literal_eval(candidate)
+        except (ValueError, SyntaxError):
+            value = candidate.strip(chr(39) + chr(34))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _safe_display_text(value: str, limit: int = 240) -> str:
+    return " ".join(str(value).replace("\r", " ").replace("\n", " ").split())[:limit]
+
+
+def _source_failure_text(reason_code: str, stage: str, raw_reason: str) -> str:
+    if reason_code == "not_found":
+        return "TorrServer не нашёл раздачу при запросе подробностей (HTTP 404)."
+    if reason_code == "connection":
+        return "Не удалось подключиться к TorrServer."
+    if reason_code == "timeout":
+        return "Истекло время ожидания ответа TorrServer."
+    if reason_code == "invalid_response":
+        return "TorrServer вернул ответ в неожиданном или некорректном формате."
+    if reason_code == "http_error":
+        status = re.search(r"HTTP\s+(\d{3})", raw_reason, re.IGNORECASE)
+        suffix = f" (HTTP {status.group(1)})." if status else "."
+        return "TorrServer отклонил запрос" + suffix
+    if reason_code == "metadata_unavailable" or stage in {"metadata_load", "metadata_wait", "snapshot_parse"}:
+        return "TorrServer пока не предоставил необходимые сведения о файлах раздачи."
+    return "Не удалось получить подробности раздачи из TorrServer."
+
+
+def _parse_notification_event(raw: str, category: str, capture: NotificationCapture) -> dict[str, Any]:
+    torrent_hash = _log_field(raw, "hash").lower()
+    title = _log_title(raw)
+    if not title and torrent_hash:
+        title = capture.torrent_titles.get(torrent_hash, "")
+    output = _log_field(raw, "output")
+    output_label = {"jellyfin": "Jellyfin", "kodi": "Kodi/Elementum"}.get(output, "")
+    suffix = f" (выход: {output_label})" if output_label else ""
+    event: dict[str, Any] = {
+        "heading": "",
+        "title": title,
+        "hash": torrent_hash,
+        "output": output,
+        "text": "",
+        "details": [],
+        "raw": raw,
+        "category": category,
+    }
+
+    if raw.startswith("TORRENT_DEFERRED "):
+        stage = _log_field(raw, "stage")
+        reason_code = _log_field(raw, "reason_code")
+        reason = _log_value_before(raw, "reason", "retry")
+        if not reason:
+            reason_match = re.search(r"\breason=(.*)$", raw)
+            reason = reason_match.group(1).strip() if reason_match else ""
+        if not reason_code:
+            reason_code = _source_failure_code(
+                TorrServerNotFound(torrent_hash) if stage == "action_get" and reason == torrent_hash else RuntimeError(reason),
+                stage,
+                torrent_hash,
+            )
+        event["heading"] = "Временно не удалось получить данные о раздачах"
+        event["text"] = (
+            _source_failure_text(reason_code, stage, reason)
+            + " Обработка отложена до следующего запуска; существующие управляемые файлы сохраняются."
+        )
+        if stage:
+            stage_labels = {
+                "list_embedded_metadata": "разбор сведений из списка",
+                "action_get": "запрос подробностей",
+                "snapshot_parse": "разбор сведений о файлах",
+                "metadata_load": "загрузка метаданных",
+                "metadata_wait": "ожидание метаданных",
+            }
+            event["details"].append(f"Этап: {stage_labels.get(stage, stage)}.")
+        if reason_code == "unknown" and reason and reason != torrent_hash:
+            event["details"].append("Техническая причина: " + _safe_display_text(reason, 180))
+    elif raw.startswith("QUALITY_DEFERRED "):
+        event["heading"] = "Временно не удалось определить качество медиа"
+        event["text"] = (
+            "Не удалось надёжно определить качество или подготовить сведения о видеофайлах. "
+            "Существующие STRM/NFO и запись манифеста сохранены; повторная попытка будет в следующем запуске."
+        )
+        error = _log_value_before(raw, "error", "retry")
+        if error:
+            event["details"].append("Причина: " + _safe_display_text(error, 200))
+    elif raw.startswith("QUALITY_SKIP "):
+        event["heading"] = "Медиа пропущено: нет поддерживаемых видеофайлов"
+        event["text"] = (
+            "В раздаче не найдено видеофайлов поддерживаемых форматов. "
+            "Эта раздача будет пропущена, а ранее созданные управляемые STRM/NFO будут очищены, если они есть."
+        )
+    elif raw.startswith("STRM_COLLISION_SUMMARY "):
+        event["heading"] = "Совпадения имён STRM разрешены автоматически"
+        affected = int(_log_field(raw, "affected_files") or "0")
+        short_count = int(_log_field(raw, "short_hash_files") or "0")
+        full_count = int(_log_field(raw, "full_hash_files") or "0")
+        event["text"] = (
+            f"У {affected} файлов совпадали целевые имена. Сервис автоматически сделал имена STRM уникальными "
+            f"(короткий идентификатор: {short_count}; полный хеш: {full_count})."
+        )
+        examples = _log_value_before(raw, "examples", "__no_such_field__")
+        if not examples:
+            match = re.search(r"\bexamples=(.*)$", raw)
+            examples = match.group(1) if match else ""
+        paths = []
+        for part in examples.split(";"):
+            match = re.match(r"file_id=(\d+):(.*)", part)
+            if match:
+                paths.append(f"{match.group(2)} (ID файла {match.group(1)})")
+        if paths:
+            event["details"].append("Примеры исходных файлов: " + "; ".join(paths[:3]) + ".")
+    elif raw.startswith("STRM_COLLISION_UNRESOLVED "):
+        event["heading"] = "Конфликт имён STRM не удалось разрешить"
+        event["text"] = (
+            "Безопасно создать все выходные файлы не удалось. Обработка этой раздачи прервана, "
+            "чтобы не перезаписать один файл другим."
+        )
+        source = _log_value_before(raw, "source", "__no_such_field__")
+        if not source:
+            match = re.search(r"\bsource=(.*)$", raw)
+            source = match.group(1) if match else ""
+        destination = _log_value_before(raw, "destination", "source")
+        if destination:
+            event["details"].append("Конфликтующий целевой путь: " + _safe_display_text(destination, 220) + ".")
+        if source:
+            event["details"].append("Исходный файл: " + _safe_display_text(source, 220) + ".")
+    elif raw.startswith("STRM_MISSING "):
+        event["heading"] = "Обнаружены отсутствующие STRM-файлы"
+        count = _log_field(raw, "count") or "неизвестное число"
+        event["text"] = f"В медиатеке отсутствуют {count} STRM-файлов, которые числятся в манифесте сервиса."
+        match = re.search(r"\bfirst=(.*)$", raw)
+        if match:
+            event["details"].append("Первый обнаруженный путь: " + _safe_display_text(match.group(1), 220) + ".")
+    elif raw.startswith("SEASON_FALLBACK "):
+        event["heading"] = "Не удалось определить сезон сериала"
+        season = _log_field(raw, "season") or "00"
+        file_path = _log_value_before(raw, "file", "season")
+        event["text"] = (
+            f"Сезон не удалось определить по имени файла; сервис поместит его в Season {season}."
+        )
+        if file_path:
+            event["details"].append("Файл: " + _safe_display_text(file_path, 220) + ".")
+    elif raw.startswith("PATH_CONFLICT "):
+        event["heading"] = "Конфликт каталогов медиатеки"
+        if "reason=unmanaged_directory_exists" in raw:
+            destination = _log_value_before(raw, "destination", "reason")
+            event["text"] = (
+                "Целевой каталог уже существует, но не зарегистрирован как управляемый каталог сервиса. "
+                "Синхронизация этой раздачи остановлена, каталог не перезаписывался."
+            )
+            if destination:
+                event["details"].append("Существующий каталог: " + _safe_display_text(destination, 220) + ".")
+        else:
+            old_path = _log_value_before(raw, "old", "new")
+            new_path = _log_value_before(raw, "new", "__no_such_field__")
+            if not new_path:
+                match = re.search(r"\bnew=(.*)$", raw)
+                new_path = match.group(1) if match else ""
+            event["text"] = (
+                "Старый и новый каталоги существуют одновременно. Сервис не стал переносить медиа "
+                "автоматически, чтобы не затронуть существующие данные."
+            )
+            if old_path:
+                event["details"].append("Старый каталог: " + _safe_display_text(old_path, 180) + ".")
+            if new_path:
+                event["details"].append("Новый каталог: " + _safe_display_text(new_path, 180) + ".")
+    elif raw.startswith("ABORT-REMOVE "):
+        event["heading"] = "Раздача не удалена из-за защитного лимита"
+        limit = _log_field(raw, "limit") or "неизвестно"
+        event["text"] = (
+            f"Сервис не удалил раздачу: достигнут лимит обратного удаления за один запуск ({limit}). "
+            "Это ограничение защищает от массового удаления при ошибках в медиатеке."
+        )
+    elif raw.startswith("REMOVE ") and "reason=strm_deleted_by_user" in raw:
+        event["heading"] = "Обнаружены отсутствующие STRM-файлы"
+        event["text"] = (
+            "В соответствии с настройкой обратного удаления связанная раздача удалена из TorrServer "
+            "после удаления управляемого STRM-файла."
+        )
+    elif raw.startswith("ERROR ") and "operation=rem" in raw:
+        event["heading"] = "Не удалось удалить раздачу из TorrServer"
+        event["text"] = (
+            "После обнаружения удалённого STRM-файла сервис попытался удалить связанную раздачу, "
+            "но TorrServer не подтвердил успешное удаление."
+        )
+        detail = capture.exception_details.get(raw)
+        if detail:
+            event["details"].append("Причина: " + _safe_display_text(detail, 220))
+    elif raw.startswith("ERROR_NFO "):
+        event["heading"] = "Не удалось записать файл NFO"
+        destination = _log_value_before(raw, "destination", "reason")
+        event["text"] = "На месте ожидаемого файла NFO находится каталог. Сервис не смог обновить метаданные."
+        if destination:
+            event["details"].append("Путь: " + _safe_display_text(destination, 220) + ".")
+    elif raw.startswith("ERROR ") and "reason=destination_is_directory" in raw:
+        event["heading"] = "Не удалось записать STRM-файл"
+        destination = _log_value_before(raw, "destination", "reason")
+        event["text"] = "На месте ожидаемого STRM-файла находится каталог. Файл не был перезаписан."
+        if destination:
+            event["details"].append("Путь: " + _safe_display_text(destination, 220) + ".")
+    elif raw.startswith("ERROR ") and "reason=destination_exists_as_file" in raw:
+        event["heading"] = "Не удалось создать каталог медиа"
+        destination = _log_value_before(raw, "destination", "reason")
+        event["text"] = "На месте целевого каталога находится обычный файл. Сервис не изменял его и не продолжил эту раздачу."
+        if destination:
+            event["details"].append("Путь: " + _safe_display_text(destination, 220) + ".")
+    elif raw.startswith("STALE_UNKNOWN_PATH "):
+        event["heading"] = "Не удалось безопасно очистить устаревшую запись"
+        event["text"] = (
+            "У записи манифеста не найден путь к управляемому каталогу. "
+            "Сервис не стал удалять файлы по предположительному пути."
+        )
+    elif raw.startswith("NFO_FORMAT_NEWER "):
+        version = _log_field(raw, "version") or "неизвестная"
+        current = _log_field(raw, "current") or "неизвестная"
+        event["heading"] = "Обнаружен файл NFO более нового формата"
+        event["text"] = (
+            f"Файл NFO использует формат {version}, а текущая версия сервиса поддерживает формат {current}. "
+            "Исходное содержимое сохранено без изменений."
+        )
+    elif raw.startswith("TVSHOW_STREAMDETAILS_SKIP "):
+        event["heading"] = "Не удалось добавить технические сведения в NFO сериала"
+        event["text"] = "Сведения о видеопотоке не удалось перенести в tvshow.nfo; остальная синхронизация продолжается."
+        error = _log_value_before(raw, "error", "__no_such_field__")
+        if not error:
+            match = re.search(r"\berror=(.*)$", raw)
+            error = match.group(1) if match else ""
+        if error:
+            event["details"].append("Причина: " + _safe_display_text(error, 180))
+    elif raw.startswith("ERROR ") and "operation=sync" in raw:
+        event["heading"] = "Не удалось синхронизировать медиа"
+        event["text"] = "Обработка этой раздачи завершилась ошибкой; существующая запись манифеста сохранена."
+        detail = capture.exception_details.get(raw)
+        if detail:
+            event["details"].append("Ошибка: " + _safe_display_text(detail, 220))
+    elif raw.startswith("FATAL "):
+        event["heading"] = "Сервис завершил запуск с критической ошибкой"
+        event["title"] = ""
+        event["text"] = "Запуск torr2strm аварийно завершился. Проверьте журнал сервиса для полного traceback."
+        detail = raw[len("FATAL "):].strip()
+        if detail:
+            event["details"].append("Ошибка: " + _safe_display_text(detail, 220))
+    elif raw.startswith("REMOVE "):
+        event["heading"] = "Изменение медиатеки"
+        event["text"] = "Сервис выполнил удаление раздачи из TorrServer."
+    elif raw.startswith("STRM_MISSING "):
+        event["heading"] = "Обнаружены отсутствующие STRM-файлы"
+        event["text"] = "Некоторые STRM-файлы из манифеста не найдены."
+    else:
+        # Unknown events are still visible, but do not expose an opaque raw log line
+        # as the user-facing sentence.
+        event["heading"] = "Другие предупреждения" if category == "warnings" else "Другие ошибки"
+        event["text"] = "Обнаружено событие, требующее внимания. Подробности доступны в журнале torr2strm."
+        code_match = re.match(r"([A-Z][A-Z0-9_-]{2,})", raw)
+        if code_match:
+            event["details"].append("Тип события в журнале: " + code_match.group(1) + ".")
+        detail = capture.exception_details.get(raw)
+        if detail:
+            event["details"].append("Ошибка: " + _safe_display_text(detail, 220))
+
+    if suffix and not raw.startswith("STRM_COLLISION_SUMMARY "):
+        event["text"] += suffix
+    if not event["title"] and torrent_hash:
+        event["title"] = f"Раздача {torrent_hash[:8]}"
+    return event
+
+
+def _render_notification_body(values: list[str], category: str, capture: NotificationCapture) -> str:
+    raw_events = _notification_events(values)
+    parsed = [_parse_notification_event(raw, category, capture) for raw in raw_events]
+    if not parsed:
+        return ""
+
+    # The sync-level traceback may repeat a more specific per-torrent diagnostic
+    # (for example, STRM_COLLISION_UNRESOLVED followed by the raised RuntimeError).
+    # Keep the actionable event and avoid showing the same failure twice.
+    explicit_failure_hashes = {
+        event["hash"] for event in parsed
+        if event["hash"] and event["heading"] in {
+            "Конфликт имён STRM не удалось разрешить",
+            "Не удалось записать STRM-файл",
+            "Не удалось записать файл NFO",
+            "Не удалось создать каталог медиа",
+        }
+    }
+    parsed = [
+        event for event in parsed
+        if not (
+            event["heading"] == "Не удалось синхронизировать медиа"
+            and event["hash"] in explicit_failure_hashes
+        )
+    ]
+
+    # A repeated readable media title can refer to different torrent releases.
+    title_hashes: dict[str, set[str]] = {}
+    for event in parsed:
+        if event["title"]:
+            title_hashes.setdefault(event["title"].casefold(), set()).add(event["hash"])
+    for event in parsed:
+        if event["title"] and event["hash"] and len(title_hashes.get(event["title"].casefold(), set())) > 1:
+            event["title"] += f" (раздача {event['hash'][:8]})"
+
+    grouped: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+    for event in parsed:
+        heading = event["heading"]
+        identity = (event["hash"], event["title"] or "")
+        section = grouped.setdefault(heading, {})
+        if identity not in section:
+            section[identity] = {
+                "title": event["title"],
+                "hash": event["hash"],
+                "texts": [],
+                "details": [],
+            }
+        item = section[identity]
+        if event["text"] and event["text"] not in item["texts"]:
+            item["texts"].append(event["text"])
+        for detail in event["details"]:
+            if detail and detail not in item["details"]:
+                item["details"].append(detail)
+
+    heading_order = [
+        "Сервис завершил запуск с критической ошибкой",
+        "Не удалось синхронизировать медиа",
+        "Не удалось безопасно очистить устаревшую запись",
+        "Конфликт имён STRM не удалось разрешить",
+        "Конфликт каталогов медиатеки",
+        "Не удалось создать каталог медиа",
+        "Не удалось записать STRM-файл",
+        "Не удалось записать файл NFO",
+        "Не удалось удалить раздачу из TorrServer",
+        "Раздача не удалена из-за защитного лимита",
+        "Медиа пропущено: нет поддерживаемых видеофайлов",
+        "Временно не удалось определить качество медиа",
+        "Временно не удалось получить данные о раздачах",
+        "Обнаружены отсутствующие STRM-файлы",
+        "Не удалось определить сезон сериала",
+        "Совпадения имён STRM разрешены автоматически",
+        "Раздача удалена по настройке обратного удаления",
+        "Изменение медиатеки",
+        "Обнаружен файл NFO более нового формата",
+        "Не удалось добавить технические сведения в NFO сериала",
+        "Другие предупреждения",
+        "Другие ошибки",
+    ]
+    rank = {heading: index for index, heading in enumerate(heading_order)}
+    sections = sorted(grouped.items(), key=lambda pair: (rank.get(pair[0], len(rank)), pair[0]))
+    opening = (
+        "Во время запуска torr2strm обнаружены предупреждения."
+        if category == "warnings"
+        else "Во время запуска torr2strm обнаружены ошибки."
+    )
+    lines = [opening]
+    omitted = 0
+    budget = 3150
+
+    for heading, items in sections:
+        block = ["", heading]
+        ordered_items = sorted(items.values(), key=lambda item: (str(item["title"]).casefold(), item["hash"]))
+        for item in ordered_items:
+            title = item["title"] or "Медиа без определённого названия"
+            description = " ".join(item["texts"])
+            media_line = f"• «{title}» — {description}" if item["title"] else f"• {description}"
+            detail_lines = [f"  - {detail}" for detail in item["details"]]
+            candidate = block + [media_line] + detail_lines
+            if len("\n".join(lines + candidate)) <= budget:
+                block = candidate
+            else:
+                # Retain media identity and a concise issue summary even when
+                # long paths/details cannot fit in the Telegram-sized message.
+                compact = f"• «{title}» — {description[:180]}"
+                if len("\n".join(lines + block + [compact])) <= budget:
+                    block.append(compact)
+                else:
+                    omitted += 1
+        if len(block) > 2:
+            if len("\n".join(lines + block)) <= budget:
+                lines.extend(block)
+            else:
+                omitted += len(items)
+
+    if omitted:
+        lines.append("")
+        lines.append(f"Ещё {omitted} событий не вошли в сообщение; полные подробности сохранены в журнале.")
+    lines.append("")
+    lines.append("Технические подробности доступны в журнале сервиса.")
+    body = "\n".join(lines)
+    if len(body) > 3450:
+        body = body[:3350].rstrip() + "\n\nПодробности и список событий сохранены в журнале."
+    return body[:3500]
 
 
 def apprise_notify(config: dict[str, Any], *, title: str, body: str, notify_type: str, tag: str) -> bool:
@@ -3171,7 +3658,7 @@ def dispatch_run_notifications(cfg: dict[str, Any], capture: NotificationCapture
     config = cfg.get("notifications", {})
     if not isinstance(config, dict) or not config.get("enabled"):
         return
-    current = {"warnings": _notification_events(capture.warnings), "errors": _notification_events(capture.errors)}
+
     state_path = Path(config["state_path"])
     state: dict[str, Any] = {}
     try:
@@ -3188,15 +3675,19 @@ def dispatch_run_notifications(cfg: dict[str, Any], capture: NotificationCapture
         ("warnings", "warning", config["tag_warning"]),
         ("errors", "failure", config["tag_critical"]),
     ):
-        events = current[category]
-        fingerprint = sha256_text(json.dumps(events, ensure_ascii=False, separators=(",", ":"))) if events else ""
-        if events and fingerprint != str(state.get(category, "")):
-            visible = events[:15]
-            body = f"Service: {service_name}\nSeverity: {category}\nDistinct events: {len(events)}\n\n"
-            body += "\n".join(f"- {event}" for event in visible)
-            if len(events) > len(visible):
-                body += f"\n- … and {len(events) - len(visible)} additional distinct events"
-            apprise_notify(config, title=f"{service_name}: {category}", body=body, notify_type=kind, tag=tag)
+        values = capture.warnings if category == "warnings" else capture.errors
+        body = _render_notification_body(values, category, capture)
+        # Fingerprint the actual user-facing message, so a newly resolved media
+        # title or actionable cause can update a previously identical log event.
+        fingerprint = sha256_text(body) if body else ""
+        if body and fingerprint != str(state.get(category, "")):
+            apprise_notify(
+                config,
+                title=f"{service_name}: {'warnings' if category == 'warnings' else 'critical'}",
+                body=f"Service: {service_name}\n\n{body}",
+                notify_type=kind,
+                tag=tag,
+            )
         state[category] = fingerprint
     try:
         atomic_write_text(state_path, json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2) + "\n", mode=0o600)
@@ -3218,7 +3709,9 @@ def main() -> int:
         capture = NotificationCapture()
         LOG.addHandler(capture)
         client = TorrServerClient(cfg["torrserver"]["url"], cfg["torrserver"]["timeout_sec"], cfg["torrserver"]["remove_timeout_sec"])
-        return SyncCoordinator(cfg, client, dry_run=args.dry_run).run()
+        return SyncCoordinator(
+            cfg, client, dry_run=args.dry_run, notification_capture=capture
+        ).run()
     except KeyboardInterrupt:
         LOG.warning("INTERRUPTED synchronization cancelled")
         return 130
