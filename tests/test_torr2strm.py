@@ -1573,3 +1573,55 @@ def test_apprise_does_not_forward_successful_cleanup_and_renders_exception_detai
         assert "Не удалось синхронизировать медиа" in body
         assert "permission denied while writing STRM" in body
         assert "ERROR output=jellyfin" not in body
+
+
+def test_torrserver_title_is_preserved_when_action_get_returns_not_found():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        cfg_data = cfg(base / "jelly", base / "kodi")
+        h = "c" * 40
+
+        class ListedButUnavailable:
+            base_url = "http://127.0.0.1:8092"
+            def list_torrents(self):
+                return [{"Hash": h, "Title": "Definitely, Maybe (2008)", "Category": "movie", "Data": ""}]
+            def get_torrent(self, torrent_hash):
+                from torr2strm import TorrServerNotFound
+                raise TorrServerNotFound(torrent_hash)
+
+        capture = NotificationCapture()
+        logger = logging.getLogger("torr2strm")
+        logger.addHandler(capture)
+        try:
+            coordinator = SyncCoordinator(cfg_data, ListedButUnavailable(), dry_run=True, notification_capture=capture)
+            snapshots, deferred = coordinator._get_snapshot_list()
+        finally:
+            logger.removeHandler(capture)
+
+        assert snapshots == []
+        assert deferred == {h}
+        assert capture.torrent_titles[h] == "Definitely, Maybe (2008)"
+        assert any("reason_code=not_found" in event for event in capture.warnings)
+        body = torr2strm_module._render_notification_body(capture.warnings, "warnings", capture)
+        assert "Definitely, Maybe (2008)" in body
+        assert "HTTP 404" in body
+        assert h not in body
+
+
+def test_unresolved_collision_notification_includes_both_paths_and_hides_duplicate_sync_error():
+    capture = NotificationCapture()
+    h = "d" * 40
+    capture.register_title(h, "Lexx (1997) Season 01 DVD collection")
+    capture.errors.extend([
+        f"STRM_COLLISION_UNRESOLVED output=jellyfin title='Lexx (1997) Season 01 DVD collection' hash={h} destination=tv/1080p/Lexx/Season 01/VTS_01_0.VOB.strm source=DVD2/VIDEO_TS/VTS_01_0.VOB",
+        f"ERROR output=jellyfin hash={h} title='Lexx (1997) Season 01 DVD collection' operation=sync",
+    ])
+    raw_sync = capture.errors[1]
+    capture.exception_details[raw_sync] = "RuntimeError: unresolved STRM destination collision"
+    body = torr2strm_module._render_notification_body(capture.errors, "errors", capture)
+    assert "Lexx (1997) Season 01 DVD collection" in body
+    assert "Конфликт имён STRM не удалось разрешить" in body
+    assert "tv/1080p/Lexx/Season 01/VTS_01_0.VOB.strm" in body
+    assert "DVD2/VIDEO_TS/VTS_01_0.VOB" in body
+    assert "Не удалось синхронизировать медиа" not in body
+    assert "STRM_COLLISION_UNRESOLVED" not in body
