@@ -2,8 +2,8 @@
 Description=Run TorrServer to STRM synchronizer periodically
 
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=5min
+OnCalendar=*:0/5
+Persistent=true
 RandomizedDelaySec=15s
 AccuracySec=1s
 Unit=torr2strm.service

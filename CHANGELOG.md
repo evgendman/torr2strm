@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Change the systemd timer template to a calendar-based five-minute schedule (`OnCalendar=*:0/5`) with `Persistent=true`. This follows the 2026-10-27 reference deployment diagnosis where the previous monotonic timer reported no next elapse after activation. This is a post-v1.4.14 release follow-up; the published v1.4.14 tag/archive still contains the previous timer template. No Python, manifest schema, or NFO format change.
+
 ## 1.4.14
 
 - Preserve the category from TorrServer action=list when a refreshed action=get response omits or blanks the category after metadata loading.
