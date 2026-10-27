@@ -3157,13 +3157,13 @@ class NotificationCapture(logging.Handler):
 
     def register_title(self, torrent_hash: str, title: str) -> None:
         normalized_hash = canonical_hash(str(torrent_hash))
-        clean_title = str(title).replace("\r", " ").replace("\\n", " ").strip()
+        clean_title = str(title).replace("\r", " ").replace("\n", " ").strip()
         if normalized_hash and clean_title:
             self.torrent_titles[normalized_hash] = clean_title[:300]
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
-            message = record.getMessage().replace("\r", " ").replace("\\n", " ").strip()
+            message = record.getMessage().replace("\r", " ").replace("\n", " ").strip()
             # These are successful housekeeping actions, intermediate fallback
             # diagnostics, delivery diagnostics, or deliberately detailed per-file
             # collision entries. They remain in the local journal.
@@ -3178,7 +3178,7 @@ class NotificationCapture(logging.Handler):
                 return
             if record.exc_info and record.exc_info[1] is not None:
                 exc = record.exc_info[1]
-                detail = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\\n", " ").strip()
+                detail = f"{type(exc).__name__}: {exc}".replace("\r", " ").replace("\n", " ").strip()
                 self.exception_details[message] = detail[:700]
             if record.levelno >= logging.ERROR:
                 self.errors.append(message)
@@ -3189,7 +3189,7 @@ class NotificationCapture(logging.Handler):
 
 
 def _notification_events(values: list[str]) -> list[str]:
-    return sorted({str(v).replace("\r", " ").replace("\\n", " ").strip()[:500] for v in values if str(v).strip()})
+    return sorted({str(v).replace("\r", " ").replace("\n", " ").strip()[:500] for v in values if str(v).strip()})
 
 
 def _source_failure_code(exc: Exception, stage: str, torrent_hash: str) -> str:
