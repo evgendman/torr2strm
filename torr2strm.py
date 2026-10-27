@@ -1196,6 +1196,8 @@ def safe_join(base: Path, *parts: str) -> Path:
     except ValueError as exc:
         raise ValueError(f"path escapes base directory: {candidate}") from exc
     return candidate
+
+
 def validate_relative_torrent_path(path_value: str) -> PurePosixPath:
     if not isinstance(path_value, str) or not path_value:
         raise ValueError("empty torrent file path")
