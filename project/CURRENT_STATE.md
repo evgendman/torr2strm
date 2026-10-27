@@ -1,6 +1,6 @@
 # Current state
 
-Repository release: v1.4.13 published on 2026-10-27; all 53 tests and GitHub Actions CI passed. Current candidate: v1.4.14 (Phase 17 category stability implemented; 56 local tests pass; GitHub CI and reference mini-PC acceptance pending). MINI-Ubuntu still runs v1.4.12; v1.4.13 has not been installed.
+Repository release: v1.4.14 published on 2026-10-27; the 56-test suite, GitHub Actions CI, and release workflow succeeded. MINI-Ubuntu still runs v1.4.12; installation and reference acceptance of v1.4.14 remain pending.
 Manifest schema: v5.
 NFO format: v3.
 
@@ -44,7 +44,9 @@ The v1.4.11 reference mini-PC dry run on 2026-10-23 reported `created=0 updated=
 
 The v1.4.13 release separates user-facing Apprise summaries from diagnostic log lines. Notifications are grouped by problem type and media/release title, use inventory titles even when a later TorrServer request fails, distinguish known source failure classes, explain retry/output preservation, and keep technical details in the journal. Successful directory cleanup and intermediate list-metadata fallback warnings are excluded from user-facing alerts. The official release archive checksum was verified on MINI-Ubuntu; `python3 -m py_compile torr2strm.py tests/test_torr2strm.py` passed and the archive's test suite reported 53 passed. A live candidate dry-run was stopped when a scheduled v1.4.12 sync started, so reference dry-run acceptance remains pending. v1.4.13 has not been installed; no output-tree or manifest writes were made by the candidate.
 
-## v1.4.14 — category stability candidate
+## v1.4.14 — category stability release
 
-Phase 17 is implemented in the candidate branch. Category resolution now prefers a category supplied by refreshed action=get, falls back to the original action=list category only when refreshed detail is absent/blank, and preserves prior records/output when both current sources omit a category but a trusted movie/tv category exists in the old manifests. Explicit unsupported categories still map to _uncategorized. Local validation: Python compilation passed and 56 tests passed. GitHub CI and reference mini-PC dry-run acceptance remain pending. No installed source, system configuration, manifests, or media output trees were changed during these local unit tests.
+The official v1.4.14 release is published. Category resolution now prefers an explicit category from refreshed action=get, falls back to the original action=list category only when refreshed detail is absent/blank, and defers the torrent when both current sources lack a category but prior manifests provide a trusted movie/tv category. This preserves prior output and manifest records instead of moving media to _uncategorized. Explicit unsupported categories still map to _uncategorized; no title/path/external-metadata guessing is added.
+
+Verification on MINI-Ubuntu, in an isolated temporary release-check directory: downloaded official archive checksum matched SHA256SUMS; VERSION and --version reported 1.4.14; py_compile passed; tests from the release archive reported 56 passed. GitHub Actions PR CI, main-branch CI, and the official release workflow all succeeded. This is not installation acceptance: the installed software remains v1.4.12, and no live category-correction dry run or subsequent no-op sync has been performed. No installed source, system configuration, manifests, or media output trees were changed by this release verification.
 
