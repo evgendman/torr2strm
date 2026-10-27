@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Adopt a calendar-based five-minute systemd timer schedule (`OnCalendar=*:0/5`) with `Persistent=true`. This follows an ambiguous `NEXT=-` observation on 2026-10-27 while the Type=oneshot service was still running; a post-completion state check of the previous monotonic timer was not captured, so a failure to re-arm was not proven. The calendar schedule makes the next wall-clock event observable and supports catch-up after downtime. This remains a post-v1.4.14 follow-up; the published v1.4.14 tag/archive still contains the previous timer template. No Python, manifest schema, or NFO format change.
+- Restore the monotonic systemd timer schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) after reviewing the 2026-10-27 evidence: the `NEXT=-` snapshot was captured while the Type=oneshot service was still running, and no post-completion snapshot established a re-arming failure. Keep `RandomizedDelaySec=15s` and `AccuracySec=1s`. Host-side restoration still requires verification once MINI-Ubuntu is reachable. No Python, manifest schema, or NFO format change.
 
 ## 1.4.14
 
