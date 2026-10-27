@@ -1,6 +1,6 @@
 # Current state
 
-Software version: 1.4.13 candidate (structured Apprise notifications implemented; 53 local tests pass; GitHub CI and reference mini-PC acceptance pending).
+Repository release: v1.4.13 published on 2026-10-27; all 53 tests and GitHub Actions CI passed. MINI-Ubuntu still runs v1.4.12; installation and reference acceptance remain pending.
 Manifest schema: v5.
 NFO format: v3.
 
@@ -42,4 +42,4 @@ The v1.4.11 reference mini-PC dry run on 2026-10-23 reported `created=0 updated=
 
 ## v1.4.13 — structured Apprise notifications
 
-The candidate separates user-facing Apprise summaries from diagnostic log lines. Notifications are grouped by problem type and media/release title, use inventory titles even when a later TorrServer request fails, distinguish known source failure classes, explain retry/output preservation, and keep technical details in the journal. Successful directory cleanup and intermediate list-metadata fallback warnings are excluded from user-facing alerts. Local compile and 53-test suite passed on the reference mini-PC's Python runtime. No live install or media-tree changes have been performed from this candidate yet.
+The v1.4.13 release separates user-facing Apprise summaries from diagnostic log lines. Notifications are grouped by problem type and media/release title, use inventory titles even when a later TorrServer request fails, distinguish known source failure classes, explain retry/output preservation, and keep technical details in the journal. Successful directory cleanup and intermediate list-metadata fallback warnings are excluded from user-facing alerts. The official release archive checksum was verified on MINI-Ubuntu; `python3 -m py_compile torr2strm.py tests/test_torr2strm.py` passed and the archive's test suite reported 53 passed. A live candidate dry-run was stopped when a scheduled v1.4.12 sync started, so reference dry-run acceptance remains pending. v1.4.13 has not been installed; no output-tree or manifest writes were made by the candidate.
