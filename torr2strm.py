@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.13 - TorrServer-only STRM/NFO materialization.
+"""torr2strm 1.4.14 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
 - No external indexer or metadata source is queried.
-- Missing or unsupported TorrServer category maps to _uncategorized; category is never guessed.
+- Explicitly unsupported categories map to _uncategorized; blank categories use a trusted list fallback or preserve prior managed output when ambiguous.
 - Quality root evidence priority: embedded video dimensions, recognized structured release quality/resolution, explicit 4K/2160p markers in the torrent title, then file paths, then 1080p default.
 - Jellyfin keeps its existing output layout; Kodi/Elementum keeps its normalized movie/TV tree and playback semantics.
 - Cached NFOs may be reused for exact-file streamdetails, but never determine category, quality root, or display quality label.
@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.13"
+VERSION = "1.4.14"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -1376,6 +1376,75 @@ def extract_list_embedded_torrent(item: dict[str, Any]) -> dict[str, Any] | None
         return None
     raw_files = get_field(embedded, "filestats", "files", default=None)
     return embedded if isinstance(raw_files, list) and raw_files else None
+
+
+_TRUSTED_TORRSERVER_CATEGORIES = frozenset({"movie", "tv"})
+
+
+def _normalized_torrserver_category(value: Any) -> str | None:
+    if value is None:
+        return None
+    category = str(value).strip().lower()
+    return category or None
+
+
+def _resolve_snapshot_category(
+    detail: dict[str, Any],
+    list_item: dict[str, Any],
+    torrent_hash: str,
+    stage: str,
+) -> tuple[dict[str, Any], str | None]:
+    """Prefer the current detail response; fall back only when its category is blank."""
+    resolved = dict(detail)
+    response_category = _normalized_torrserver_category(
+        get_field(resolved, "category", default=None)
+    )
+    if response_category is not None:
+        if stage == "metadata_wait":
+            status = "trusted" if response_category in _TRUSTED_TORRSERVER_CATEGORIES else "unsupported"
+            LOG.info(
+                "CATEGORY_SOURCE hash=%s source=action_get_refreshed category=%s status=%s",
+                torrent_hash, response_category, status,
+            )
+        return resolved, response_category
+
+    listed_raw = get_field(list_item, "category", default=None)
+    listed_category = _normalized_torrserver_category(listed_raw)
+    if listed_category is not None:
+        resolved["category"] = listed_raw
+        LOG.info(
+            "CATEGORY_FALLBACK hash=%s source=action_list category=%s stage=%s",
+            torrent_hash, listed_category, stage,
+        )
+        return resolved, listed_category
+
+    return resolved, None
+
+
+def _trusted_manifest_categories(manifests: Any) -> dict[str, str]:
+    """Return prior trusted categories; mark conflicting output manifests as ambiguous."""
+    candidates: dict[str, set[str]] = {}
+    for manifest in manifests:
+        if not isinstance(manifest, dict):
+            continue
+        records = manifest.get("torrents", {})
+        if not isinstance(records, dict):
+            continue
+        for raw_hash, record in records.items():
+            if not isinstance(record, dict):
+                continue
+            category = _normalized_torrserver_category(record.get("category"))
+            if category not in _TRUSTED_TORRSERVER_CATEGORIES:
+                continue
+            try:
+                torrent_hash = canonical_hash(str(raw_hash))
+            except (TypeError, ValueError):
+                continue
+            candidates.setdefault(torrent_hash, set()).add(category)
+    return {
+        torrent_hash: next(iter(categories)) if len(categories) == 1 else "conflict"
+        for torrent_hash, categories in candidates.items()
+    }
 
 
 def is_video(path_value: str, extensions: set[str]) -> bool:
@@ -2825,8 +2894,12 @@ class SyncCoordinator:
         if not self.outputs:
             raise ValueError("at least one output must be enabled")
 
-    def _get_snapshot_list(self) -> tuple[list[TorrentSnapshot], set[str]]:
-        """Isolate recoverable per-torrent source errors without misclassifying a deletion."""
+    def _get_snapshot_list(
+        self,
+        previous_categories: dict[str, str] | None = None,
+    ) -> tuple[list[TorrentSnapshot], set[str]]:
+        """Isolate recoverable per-torrent errors and protect prior paths from uncertain categories."""
+        previous_categories = previous_categories or {}
         raw_list = self.client.list_torrents()
         inventory: list[tuple[dict[str, Any], str]] = []
         for item in raw_list:
@@ -2844,6 +2917,26 @@ class SyncCoordinator:
 
         snapshots: list[TorrentSnapshot] = []
         deferred_hashes: set[str] = set()
+
+        def accept_snapshot(snapshot: TorrentSnapshot, category_value: str | None, stage: str) -> bool:
+            if category_value is None:
+                previous = previous_categories.get(snapshot.hash)
+                if previous is not None:
+                    deferred_hashes.add(snapshot.hash)
+                    LOG.warning(
+                        "CATEGORY_DEFERRED hash=%s title=%r previous=%s stage=%s retry=next_run preserve_existing_output=true",
+                        snapshot.hash, snapshot.title, previous, stage,
+                    )
+                    return False
+                LOG.info(
+                    "CATEGORY_UNRESOLVED hash=%s title=%r stage=%s disposition=uncategorized",
+                    snapshot.hash, snapshot.title, stage,
+                )
+            snapshots.append(snapshot)
+            if self.notification_capture is not None:
+                self.notification_capture.register_title(snapshot.hash, snapshot.title)
+            return True
+
         for item, h in inventory:
             stage = "list_embedded_metadata"
             try:
@@ -2851,11 +2944,12 @@ class SyncCoordinator:
                 if detail is not None:
                     merged = dict(item)
                     merged.update(detail)
+                    merged, category_value = _resolve_snapshot_category(
+                        merged, item, h, stage,
+                    )
                     try:
                         snapshot = parse_snapshot(merged, h)
-                        snapshots.append(snapshot)
-                        if self.notification_capture is not None:
-                            self.notification_capture.register_title(snapshot.hash, snapshot.title)
+                        accept_snapshot(snapshot, category_value, stage)
                         continue
                     except ValueError as exc:
                         LOG.warning(
@@ -2878,16 +2972,15 @@ class SyncCoordinator:
                 if not get_field(detail, "title", "name", default=None):
                     detail = dict(detail)
                     detail["title"] = get_field(item, "title", "name", default="")
-                if not get_field(detail, "category", default=None):
-                    detail = dict(detail)
-                    detail["category"] = get_field(item, "category", default="")
+                detail, category_value = _resolve_snapshot_category(
+                    detail, item, h, stage,
+                )
 
                 stage = "snapshot_parse"
                 try:
                     snapshot = parse_snapshot(detail, h)
-                    snapshots.append(snapshot)
-                    if self.notification_capture is not None:
-                        self.notification_capture.register_title(snapshot.hash, snapshot.title)
+                    if accept_snapshot(snapshot, category_value, stage):
+                        continue
                     continue
                 except ValueError as exc:
                     if "FileStats absent/empty" not in str(exc):
@@ -2902,10 +2995,11 @@ class SyncCoordinator:
                     stage = "metadata_wait"
                     try:
                         refreshed = self.client.get_torrent(h)
+                        refreshed, category_value = _resolve_snapshot_category(
+                            refreshed, item, h, stage,
+                        )
                         snapshot = parse_snapshot(refreshed, h)
-                        snapshots.append(snapshot)
-                        if self.notification_capture is not None:
-                            self.notification_capture.register_title(snapshot.hash, snapshot.title)
+                        accept_snapshot(snapshot, category_value, stage)
                         LOG.info("METADATA_READY hash=%s", h)
                         break
                     except ValueError as exc:
@@ -2951,7 +3045,8 @@ class SyncCoordinator:
         manifests = [(o.root, o.load_manifest()) for o in self.outputs]
         old_by_output = {o.spec.name: manifest for o, (_, manifest) in zip(self.outputs, manifests)}
 
-        raw_snapshots, deferred_hashes = self._get_snapshot_list()
+        previous_categories = _trusted_manifest_categories(old_by_output.values())
+        raw_snapshots, deferred_hashes = self._get_snapshot_list(previous_categories)
         snapshot_map: dict[str, TorrentSnapshot] = {s.hash: s for s in raw_snapshots}
 
         # Category, metadata, IDs and magnets remain those already present on

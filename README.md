@@ -1,4 +1,4 @@
-# torr2strm v1.4.13
+# torr2strm v1.4.14
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
@@ -170,7 +170,7 @@ Recoverable media-information failures no longer prevent STRMs from being materi
 
 ## Upgrade and deployment
 
-Software version: v1.4.13. Manifest format v5; NFO format v3. This release replaces raw-log Apprise forwarding with plain-language notifications grouped by issue and media, improves TorrServer failure explanations, and retains technical details in the local journal. The target modes remain `0666` for files and `0777` for directories. No manifest/schema migration or clean rebuild is required.
+Software version: v1.4.14. Manifest format v5; NFO format v3. This release fixes category loss after TorrServer metadata reloads: it reuses the category from action=list when refreshed details omit it, and preserves prior managed output when both current responses lack a category but a trusted prior category exists. Explicit unsupported categories still map to _uncategorized; category is never guessed. Structured Apprise notifications from v1.4.13 are retained. The target modes remain 0666 for files and 0777 for directories. No manifest/schema migration or clean rebuild is required.
 
 For an in-place upgrade, preserve `/etc/torr2strm/config.toml`, TorrServer's inventory and both configured output trees. The installer stops the timer and service and preserves the timer's enabled/disabled state, but does not start the timer. Run the installed version check and a `--dry-run` first. Review any `STRM_COLLISION_RESOLVED` / `STRM_COLLISION_HASH_EXTENDED` entries and confirm there is no `STRM_COLLISION_UNRESOLVED` event before the first real synchronization. Re-enable the timer only after accepting the resulting output.
 

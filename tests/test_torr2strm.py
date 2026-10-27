@@ -78,6 +78,32 @@ class FakeClient:
         return None
 
 
+class SequenceResponseClient(FakeClient):
+    """Use a stable action=list row and explicit ordered action=get responses."""
+
+    def __init__(self, list_item, responses):
+        super().__init__([list_item])
+        self.list_item = list_item
+        self.responses = list(responses)
+        self.response_index = 0
+
+    def list_torrents(self):
+        item = self.list_item
+        return [{
+            "Hash": item["Hash"],
+            "Title": item["Title"],
+            "Category": item.get("Category", ""),
+            "Data": item.get("Data", ""),
+        }]
+
+    def get_torrent(self, h):
+        if h != self.list_item["Hash"]:
+            raise KeyError(h)
+        index = min(self.response_index, len(self.responses) - 1)
+        self.response_index += 1
+        return self.responses[index]
+
+
 def cfg(jelly_root, kodi_root, remove=False):
     return {
         "torrserver": {
@@ -598,6 +624,128 @@ def test_missing_or_unsupported_torrserver_category_stays_uncategorized_without_
             assert not (root / "movie").exists()
             assert not (root / "tv").exists()
 
+
+
+def test_metadata_reload_falls_back_to_list_category_for_movie_and_tv():
+    cases = [
+        ("movie", "Reference Film", "Reference.Film.mkv"),
+        ("tv", "Reference Series S01", "Reference.Series.S01E01.mkv"),
+    ]
+    for index, (category, title, path) in enumerate(cases, start=1):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            jr, kr = base / "jelly", base / "kodi"
+            h = f"{index:040x}"
+            listed = torrent(h=h, title=title, category=category, paths=[path])
+            initial = dict(listed)
+            initial["Category"] = ""
+            initial["FileStats"] = []
+            refreshed = dict(listed)
+            refreshed.pop("Category", None)
+
+            client = SequenceResponseClient(listed, [initial, refreshed])
+            assert run(cfg(jr, kr), client) == 0
+
+            for root in (jr, kr):
+                assert list((root / category / "1080p").rglob("*.strm"))
+                assert not (root / "_uncategorized").exists()
+
+
+def test_refreshed_supported_category_precedes_list_and_unsupported_detail_is_not_overwritten():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "b" * 40
+        listed = torrent(
+            h=h, title="Reference Series S01", category="tv",
+            paths=["Reference.Series.S01E01.mkv"],
+        )
+        initial = dict(listed)
+        initial["FileStats"] = []
+        refreshed = dict(listed)
+        refreshed["Category"] = "movie"
+
+        assert run(
+            cfg(jr, kr),
+            SequenceResponseClient(listed, [initial, refreshed]),
+        ) == 0
+        for root in (jr, kr):
+            assert list((root / "movie" / "1080p").rglob("*.strm"))
+            assert not (root / "tv").exists()
+            assert not (root / "_uncategorized").exists()
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "c" * 40
+        listed = torrent(
+            h=h, title="Explicit Unsupported Category", category="tv",
+            paths=["Explicit.Unsupported.Category.mkv"],
+        )
+        detail = dict(listed)
+        detail["Category"] = "anime"
+
+        assert run(
+            cfg(jr, kr),
+            SequenceResponseClient(listed, [detail]),
+        ) == 0
+        for root in (jr, kr):
+            assert list((root / "_uncategorized" / "1080p").rglob("*.strm"))
+            assert not (root / "tv").exists()
+            assert not (root / "movie").exists()
+
+
+def test_missing_category_with_prior_trusted_manifest_defers_without_changing_outputs():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        h = "d" * 40
+        valid = torrent(
+            h=h, title="Category Recovery Series S01", category="tv",
+            paths=["Category.Recovery.Series.S01E01.mkv"],
+        )
+        c = cfg(jr, kr)
+        assert run(c, FakeClient([valid])) == 0
+
+        roots = (jr, kr)
+        def read_manifests():
+            return [
+                json.loads((root / ".torr2strm" / "manifest.json").read_text(encoding="utf-8"))
+                for root in roots
+            ]
+
+        def media_files():
+            return [
+                {
+                    path.relative_to(root).as_posix(): path.read_bytes()
+                    for path in root.rglob("*")
+                    if path.is_file() and path.suffix.lower() in {".strm", ".nfo"}
+                }
+                for root in roots
+            ]
+
+        before_manifests = read_manifests()
+        before_files = media_files()
+        assert all(manifest["torrents"][h]["category"] == "tv" for manifest in before_manifests)
+
+        missing_category = dict(valid)
+        missing_category["Category"] = ""
+        initial_missing = dict(missing_category)
+        initial_missing["FileStats"] = []
+        with patch.object(torr2strm_module.LOG, "warning") as warning:
+            assert run(
+                c,
+                SequenceResponseClient(missing_category, [initial_missing, missing_category]),
+            ) == 0
+        assert any("CATEGORY_DEFERRED" in call.args[0] for call in warning.call_args_list)
+        assert read_manifests() == before_manifests
+        assert media_files() == before_files
+        assert all(not (root / "_uncategorized").exists() for root in roots)
+
+        assert run(c, FakeClient([valid])) == 0
+        assert read_manifests() == before_manifests
+        assert media_files() == before_files
+        assert all(not (root / "_uncategorized").exists() for root in roots)
 
 def test_nfo_format_v3_and_combination_tmdb_url_are_generated():
     with tempfile.TemporaryDirectory() as td:

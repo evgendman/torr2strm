@@ -1,8 +1,8 @@
 # Version model
 
-Software version: 1.4.13 (candidate).
+Software version: 1.4.14 (candidate).
 
-v1.4.13 changes only Apprise notification rendering: raw log lines are transformed into user-facing summaries grouped by issue and media. Manifest schema and NFO format remain unchanged; prior v1.4.12 synchronization behavior is retained.
+v1.4.14 implements Phase 17 category stability. It retains the validated category from TorrServer action=list when a refreshed action=get response omits it and defers a torrent with an unresolved category if a trusted prior manifest category exists, preserving the previous outputs for that run. Explicit unsupported categories still map to _uncategorized. The structured Apprise notification behavior introduced in v1.4.13 is retained.
 
 Manifest schema: v5.
 
