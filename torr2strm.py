@@ -3359,6 +3359,9 @@ def _parse_notification_event(raw: str, category: str, capture: NotificationCapt
             "чтобы не перезаписать один файл другим."
         )
         source = _log_value_before(raw, "source", "__no_such_field__")
+        if not source:
+            match = re.search(r"\bsource=(.*)$", raw)
+            source = match.group(1) if match else ""
         destination = _log_value_before(raw, "destination", "source")
         if destination:
             event["details"].append("Конфликтующий целевой путь: " + _safe_display_text(destination, 220) + ".")
@@ -3510,6 +3513,26 @@ def _render_notification_body(values: list[str], category: str, capture: Notific
     parsed = [_parse_notification_event(raw, category, capture) for raw in raw_events]
     if not parsed:
         return ""
+
+    # The sync-level traceback may repeat a more specific per-torrent diagnostic
+    # (for example, STRM_COLLISION_UNRESOLVED followed by the raised RuntimeError).
+    # Keep the actionable event and avoid showing the same failure twice.
+    explicit_failure_hashes = {
+        event["hash"] for event in parsed
+        if event["hash"] and event["heading"] in {
+            "Конфликт имён STRM не удалось разрешить",
+            "Не удалось записать STRM-файл",
+            "Не удалось записать файл NFO",
+            "Не удалось создать каталог медиа",
+        }
+    }
+    parsed = [
+        event for event in parsed
+        if not (
+            event["heading"] == "Не удалось синхронизировать медиа"
+            and event["hash"] in explicit_failure_hashes
+        )
+    ]
 
     # A repeated readable media title can refer to different torrent releases.
     title_hashes: dict[str, set[str]] = {}
