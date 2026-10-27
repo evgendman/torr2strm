@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.13
+
+- Replace raw log-line forwarding to Apprise with plain-language, user-facing summaries grouped by problem type and media/torrent.
+- Include the TorrServer inventory title as early notification context so failed action=get requests can still identify the affected release; use a hash only when no reliable title is available.
+- Distinguish common source failures (not found/HTTP 404, connection errors, timeouts, invalid responses, and unavailable metadata) and explain retry and output-preservation behavior.
+- Keep technical details and exception causes in the local journal; exclude successful cleanup and intermediate fallback diagnostics from user-facing alerts.
+- Group related file-level events under the affected media, retain STRM-collision summaries, and bound Telegram-sized bodies with an omitted-event count.
+- Preserve the shared Apprise request contract, warning/critical tags, and unchanged-message suppression.
+- No manifest/NFO schema or media-tree changes.
+
+
 ## 1.4.12
 
 - Scope Phase 15's canonical title/year selection strictly to identified Kodi TV series. Identified movie folder naming retains the previous per-quality-root selection behavior.
