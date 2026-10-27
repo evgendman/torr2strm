@@ -1,7 +1,8 @@
 # torr2strm Development Roadmap
 
 > **v1.4.12 was published, installed, and accepted on the reference mini-PC on 2026-10-23.** GitHub Actions passed compilation and 49 regression tests. The controlled mini-PC sync verified the Kodi TV canonical-directory migration for all 10 episodes, preserved every STRM payload, and a second live run reported `created=0 updated=0 unchanged=304 failed=1` with no path, mode, `mtime`, or `ctime` changes across 3,401 inspected filesystem objects. Phases 14–16 are accepted for the tested scenarios. Jellyfin log review for 12:10–12:39 showed periodic Webhook notifier completion roughly every 91 seconds, with no explicit scan/refresh/watcher entries in the filtered lines; the dashboard showed the last full-library scan about four hours earlier (duration about one minute). This is reasonable acceptance evidence, not proof that no incremental refresh occurred. The timer was enabled at 12:52:38 +05 on 2026-10-23. Its immediate catch-up activation completed at 12:53:05 and two normal five-minute periodic activations ran 12:57:39–12:58:05 and 13:02:40–13:03:07. All three exited successfully with `created=0 updated=0 unchanged=304 failed=1`. Jellyfin's filtered log showed only its existing ~91-second Webhook notifier cadence and no explicit scan/refresh/watcher entries around either periodic cycle. No recurrence of the suspected scanning anomaly was observed during these two cycles; this does not prove that no incremental refresh occurred. Phase 10, the separate torr2jellyfin orchestration interface, remains deferred.
-> Baseline: prior implementation `v1.4.0`.
+> Current release status (2026-10-27): v1.4.13 is published but has not been installed on the reference mini-PC; that installation remains on v1.4.12. Candidate v1.4.14 implements Phase 17 category preservation; 56 local tests pass, while GitHub CI and reference mini-PC acceptance remain pending.
+> Baseline: prior implementation v1.4.0.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
 ## 1. Goal
@@ -457,14 +458,14 @@ Keep the current explicit per-object mode policy: `0666` for managed files and `
 
 ### Phase 17 — Preserve category across metadata reloads and defer uncertain category changes
 
-**Status: planned.** Triggered by the Baywatch (1989) directory churn observed on the reference mini-PC on 2026-10-25. The missing fallback in the post-metadata-reload code path is confirmed; the historical category value returned by TorrServer during the incident was not logged, so a transient TorrServer-side category omission remains a hypothesis rather than a proven source-side fault.
+**Status: implemented in candidate v1.4.14; 56 local regression tests pass. GitHub CI and reference mini-PC acceptance remain pending.** Triggered by the Baywatch (1989) directory churn observed on the reference mini-PC on 2026-10-25. The missing fallback in the post-metadata-reload code path is confirmed; the historical category value returned by TorrServer during the incident was not logged, so a transient TorrServer-side category omission remains a hypothesis rather than a proven source-side fault.
 
 **Problem and evidence**
 
 - Two consecutive torr2strm runs, at approximately 11:07 and 11:12 +05, logged METADATA_LOAD and METADATA_READY for the same Baywatch S03 torrent hash.
 - In the first run, Jellyfin output moved that hash from tv/... to _uncategorized/... with reason=identity_changed. Kodi then removed 22 previously managed episode STRMs as unreferenced and pruned the empty Season 03 directory. The next run moved the same hash back to tv/... and recreated the season directory and episode links.
 - arr2torr reported candidates=0 and submitted=0 around the event; TorrServer's listed torrent count remained 271. These observations do not support a newly imported torrent as the trigger.
-- In _get_snapshot_list(), the ordinary action=get path falls back to the category from action=list when the detail response has no category (around the existing detail["category"] assignment). However, after load_torrent_metadata(), the refreshed action=get response is passed directly to parse_snapshot() without applying that fallback. parse_snapshot() maps an empty or unsupported category to _uncategorized. This gap can turn a temporary missing category into a real output-path change.
+- In _get_snapshot_list(), the ordinary action=get path already fell back to the category from action=list when the detail response had no category. The post-load refreshed action=get path did not apply that fallback and passed an empty category to parse_snapshot(), which mapped it to _uncategorized. Candidate v1.4.14 applies the fallback consistently and preserves managed output if neither current response supplies a category and prior manifests provide a trusted category.
 - Current read-only queries returned category=tv for the Baywatch hash. They cannot establish what TorrServer returned during the two historical runs.
 
 **Implementation**
@@ -485,14 +486,15 @@ Keep the current explicit per-object mode policy: `0666` for managed files and `
 
 **Exit criteria**
 
-- All new regressions and the complete existing test suite pass in GitHub Actions.
-- A reference mini-PC dry run proves that the valid list-category fallback prevents the Baywatch-style tv → _uncategorized migration when the refreshed response omits category.
-- A controlled validation confirms that unresolved category metadata preserves existing managed output and manifest state, while explicitly unsupported categories and genuine source disappearance retain their defined behavior.
-- A subsequent no-op run creates no unnecessary directory/file churn; only then is the fix accepted for the tested scenarios.
+- [x] The complete local suite passes: 56 tests, including regressions for both movie and TV category fallback, refreshed-category precedence, explicit unsupported categories, and retention/recovery when category is unresolved.
+- [ ] GitHub Actions passes the complete suite for the candidate branch.
+- [ ] A reference mini-PC dry run proves that the Baywatch-style category migration is prevented, with no planned category-driven renames or managed-file removals.
+- [x] Automated validation confirms that unresolved category metadata preserves both prior manifest records and managed files; explicit unsupported categories remain _uncategorized.
+- [ ] After installation and recovery, a subsequent mini-PC no-op run creates no unnecessary directory/file churn; only then is Phase 17 accepted for the reference deployment.
 
 ### Phase 18 — Structured, user-facing Apprise notifications
 
-**Status: implemented in v1.4.13; 53 local regression tests pass. Reference mini-PC deployment acceptance remains pending.** The implementation preserves current media-tree, manifest, NFO, TorrServer-removal, and Apprise gateway contracts.
+**Status: implemented and published in v1.4.13; 53 local regression tests and GitHub CI passed. Reference mini-PC installation and deployment acceptance remain pending.** The implementation preserves current media-tree, manifest, NFO, TorrServer-removal, and Apprise gateway contracts.
 
 **Problem**
 
@@ -554,8 +556,8 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 14 — Decouple NFO content/schema versioning from the application release version. GitHub regression tests passed; v1.4.12 controlled live sync and the subsequent no-op run passed on the mini-PC on 2026-10-23. NFO format remains v3, and no application-version-only NFO rewrites or no-op metadata churn were observed.
 - [x] Phase 15 — Stabilize canonical Kodi TV series title/year using all available inventory snapshots, without changing movie naming; preserve output for in-inventory torrents with transient quality-resolution failures and distinguish recovery from true source disappearance. GitHub regressions passed in v1.4.12; on 2026-10-23 the mini-PC dry run and live migration confirmed 10 episode STRMs moved to the canonical `Widow's Bay (2026)` path with identical contents, no planned movie-path removals, and a verified Kodi manifest. A second run was idempotent.
 - [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
-- [ ] Phase 17 — Preserve validated TorrServer category across the post-FileStats metadata reload; defer unresolved category transitions to prevent destructive _uncategorized path migrations; add category-source diagnostics and regression/mini-PC acceptance tests. Planned after the Baywatch (1989) identity_changed incident on 2026-10-25; source-side category omission remains unconfirmed.
-- [ ] Phase 18 — Implemented in v1.4.13; all 53 local regression tests pass and GitHub Actions CI succeeded. The official v1.4.13 release is published. Reference mini-PC installation and acceptance remain pending.
+- [x] Phase 17 — Implemented in candidate v1.4.14: preserve category across metadata reloads, defer unresolved category changes when prior trusted manifest state exists, and add regression tests/diagnostics. Local suite: 56 passed; GitHub CI and reference mini-PC acceptance pending.
+- [x] Phase 18 — Implemented in v1.4.13; all 53 local regression tests pass and GitHub Actions CI succeeded. The official v1.4.13 release is published. Reference mini-PC installation and acceptance remain pending.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.14
+
+- Preserve the category from TorrServer action=list when a refreshed action=get response omits or blanks the category after metadata loading.
+- Prefer an explicit category in the refreshed response. Explicit unsupported categories remain _uncategorized; no category is inferred from titles, paths, or external metadata.
+- When both current responses omit the category but a prior manifest has a trusted movie/tv category, defer that torrent for the current run and retain its prior manifest records and managed outputs.
+- Add concise category-source, list-fallback, unresolved-category, and deferred-category diagnostics.
+- Add regressions for movie/TV category fallback, refreshed-response precedence, explicit unsupported categories, and preservation/recovery across a temporary category omission.
+- Manifest schema v5 and NFO format v3 are unchanged; no migration or clean rebuild is required.
+
 ## 1.4.13
 
 - Replace raw log-line forwarding to Apprise with plain-language, user-facing summaries grouped by problem type and media/torrent.
