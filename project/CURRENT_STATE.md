@@ -1,6 +1,6 @@
 # Current state
 
-Software version: 1.4.12 (published and installed; core controlled acceptance passed on 2026-10-23).
+Software version: 1.4.13 candidate (structured Apprise notifications implemented; 51 local tests pass; GitHub CI and reference mini-PC acceptance pending).
 Manifest schema: v5.
 NFO format: v3.
 
@@ -38,3 +38,8 @@ The v1.4.11 reference mini-PC dry run on 2026-10-23 reported `created=0 updated=
 - The second live run was idempotent: `created=0 updated=0 unchanged=304 failed=1`. A snapshot comparison across 3,401 filesystem objects found zero added paths, missing paths, timestamp changes, type changes, or permission corrections. Thus the no-op run caused no observed `mtime`/`ctime` churn.
 - Post-acceptance status on 2026-10-23: `torr2strm.timer` is enabled and active. Catch-up sync completed at 12:53:05; periodic runs completed at 12:58:05 and 13:03:07. All three exited 0 and reported `created=0 updated=0 unchanged=304 failed=1`. Jellyfin's filtered log around both periodic runs showed only the persistent ~91-second Webhook notifier cadence and no explicit scan/refresh/watcher lines. No recurrence of the suspected anomaly was observed in these two scheduled cycles.
 - Acceptance status: Phases 14–16 accepted on the reference mini-PC for the tested scenarios. The Jellyfin log excerpts showed periodic Webhook Item Added/Deleted Notifier completion roughly every 91 seconds; the dashboard showed the last full-library scan about four hours earlier, taking about one minute. This is reasonable practical acceptance evidence, but it does not prove that no incremental refresh occurred. Phase 10 remains deferred.
+
+
+## v1.4.13 — structured Apprise notifications
+
+The candidate separates user-facing Apprise summaries from diagnostic log lines. Notifications are grouped by problem type and media/release title, use inventory titles even when a later TorrServer request fails, distinguish known source failure classes, explain retry/output preservation, and keep technical details in the journal. Successful directory cleanup and intermediate list-metadata fallback warnings are excluded from user-facing alerts. Local compile and 51-test suite passed on the reference mini-PC's Python runtime. No live install or media-tree changes have been performed from this candidate yet.
