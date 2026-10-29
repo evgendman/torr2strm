@@ -653,6 +653,13 @@ The first live Apprise delivery on the mini-PC contained 22 `STRM_COLLISION_RESO
 
 The post-install dry run returned `created=0 updated=152 unchanged=152 failed=1` and logged `NFO_UPDATE` for 152 items because the generated-file header embedded application `VERSION`. In candidate v1.4.11, generated NFO headers omit that software version; the comparator also treats the legacy version token as non-semantic while preserving comparison of actual content and `NFO_FORMAT_VERSION`. Automated regression tests cover both an app-only bump and an intentional NFO format-version change; CI passed. Controlled reference mini-PC acceptance is pending.
 
+## 10. v1.4.14 reference deployment acceptance — 2026-10-27
+
+- [x] Installed the official v1.4.14 release on MINI-Ubuntu; verified the official archive checksum, `--version`, source-file equality, compilation, and all 56 regression tests. Preserved `/etc/torr2strm/config.toml`, both manifests, and both output roots.
+- [x] Installed-code dry run and first live sync completed successfully. Both reported `torrents=397 quality_ready=397 quality_unresolved=0 created=0 updated=0 unchanged=794 failed=0`; the live service returned exit status 0. A category fallback from `action=list` was observed during the dry run. The fully missing category with a trusted previous manifest fallback/defer path was not exercised by current inventory and remains regression-tested.
+- [x] Reviewed the timer evidence. `NEXT=-` and `NextElapseUSecMonotonic=infinity` were observed while the Type=oneshot service was still in `activating` state; no post-completion snapshot of the old timer was captured, so a re-arming defect was not established. Restored the monotonic schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) with a 15-second random delay and one-second accuracy on both the repository template and reference host. `systemd-analyze verify` passed.
+- [x] Applied and verified the monotonic timer restoration on MINI-Ubuntu. The service completed at 22:42:57 +05 with exit status 0; `torr2strm.timer` was active/enabled and the next trigger was scheduled for 22:45:20 +05.
+- The timer-template reversion is merged on main and the original monotonic schedule is restored on MINI-Ubuntu. The published v1.4.14 tag/archive already contains this timer schedule; no new application release is needed to restore it on the host. This is an operational scheduling choice, not a confirmed fix for a proven defect. No Python app version, manifest schema v5, or NFO format v3 change is made.
 
 ## 11. Season and episode parser reliability — Phase 19 (planned 2026-10-29)
 
@@ -676,12 +683,3 @@ The torrent title is an independent fallback source, not a replacement for all f
 - Keep all parsing local to TorrServer-provided title/path data. Do not add dependencies on the adapter, tracker names, remote metadata providers, or new HTTP calls.
 - Preserve current missing-season semantics, the Jellyfin grouping algorithm, Kodi/Elementum playback contract, manifest behavior, and NFO format unless testing establishes a separate necessary change.
 - Do not claim acceptance or deploy based solely on unit tests: a future implementation should pass CI, be reviewed in a dry run, and only then be considered for live acceptance.
-
-
-## 10. v1.4.14 reference deployment acceptance — 2026-10-27
-
-- [x] Installed the official v1.4.14 release on MINI-Ubuntu; verified the official archive checksum, `--version`, source-file equality, compilation, and all 56 regression tests. Preserved `/etc/torr2strm/config.toml`, both manifests, and both output roots.
-- [x] Installed-code dry run and first live sync completed successfully. Both reported `torrents=397 quality_ready=397 quality_unresolved=0 created=0 updated=0 unchanged=794 failed=0`; the live service returned exit status 0. A category fallback from `action=list` was observed during the dry run. The fully missing category with a trusted previous manifest fallback/defer path was not exercised by current inventory and remains regression-tested.
-- [x] Reviewed the timer evidence. `NEXT=-` and `NextElapseUSecMonotonic=infinity` were observed while the Type=oneshot service was still in `activating` state; no post-completion snapshot of the old timer was captured, so a re-arming defect was not established. Restored the monotonic schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) with a 15-second random delay and one-second accuracy on both the repository template and reference host. `systemd-analyze verify` passed.
-- [x] Applied and verified the monotonic timer restoration on MINI-Ubuntu. The service completed at 22:42:57 +05 with exit status 0; `torr2strm.timer` was active/enabled and the next trigger was scheduled for 22:45:20 +05.
-- The timer-template reversion is merged on main and the original monotonic schedule is restored on MINI-Ubuntu. The published v1.4.14 tag/archive already contains this timer schedule; no new application release is needed to restore it on the host. This is an operational scheduling choice, not a confirmed fix for a proven defect. No Python app version, manifest schema v5, or NFO format v3 change is made.
