@@ -31,6 +31,8 @@ from torr2strm import (
     quality_root_from_probe_payload,
     quality_root_from_probe_or_title,
     parse_snapshot,
+    season_number,
+    source_episode_coordinates,
     usable_ffprobe,
     atomic_write_text,
     migrate_nfo_v1_to_v2,
@@ -222,6 +224,109 @@ def run(cfg_data, client):
 def test_extract_btih_accepts_magnet():
     h = "064de6b3010e8a7f8df1098b8bab407af0405f86"
     assert extract_btih(f"magnet:?xt=urn:btih:{h}&dn=test") == h
+
+
+def test_episode_parser_accepts_underscore_delimiters_and_prefers_file_path_evidence():
+    cases = [
+        ("Black.Mirror.S03E01_Dub_RHS.mkv", "Black Mirror S04", (3, 1)),
+        ("Squid.Game.S02E01_RHS_1080p.mkv", "Squid Game S03", (2, 1)),
+        ("Lucifer.S02E01.1080p.WEB-DL.5xRus.Eng.mkv", "Lucifer S01", (2, 1)),
+        ("Show.1x02_Dub.mkv", "Show S04E03", (1, 2)),
+        ("Disc/Season_12/episode01.mkv", "Series S04E02", (12, None)),
+        ("episode01.mkv", "Black Mirror S04", (4, None)),
+        ("episode01.mkv", "Show.S03E01.1080p", (3, 1)),
+        ("episode01.mkv", "Show.Season_03.1080p", (3, None)),
+    ]
+    for path, title, expected in cases:
+        assert source_episode_coordinates(path, title) == expected, (path, title)
+        assert season_number(path, title) == expected[0], (path, title)
+
+
+def test_episode_parser_rejects_partial_season_digits_and_ambiguous_tokens():
+    malformed = (
+        "Show.S123E01.mkv",
+        "Show.S03E01episode.mkv",
+        "Show.Season123.mkv",
+        "Show.Episode1201.mkv",
+    )
+    for path in malformed:
+        assert source_episode_coordinates(path, "") == (None, None), path
+        assert season_number(path, "") is None, path
+
+    # A valid two-digit season is never shortened to season zero/one.
+    assert source_episode_coordinates("Show.S03E01_Dub.mkv", "") == (3, 1)
+    assert source_episode_coordinates("Show.S02E01_RHS.mkv", "") == (2, 1)
+    assert season_number("Show.S03E01_Dub.mkv", "") == 3
+    assert season_number("Show.S02E01_RHS.mkv", "") == 2
+
+
+def test_phase19_seasons_and_episode_coordinates_reach_jellyfin_and_kodi_outputs():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        jr, kr = base / "jelly", base / "kodi"
+        black_mirror = {
+            "seriesTmdbId": 335984,
+            "seriesTitle": "Black Mirror",
+            "seriesYear": 2011,
+        }
+        squid_game = {
+            "seriesTmdbId": 93405,
+            "seriesTitle": "Squid Game",
+            "seriesYear": 2021,
+        }
+        items = [
+            torrent(
+                h="a" * 40, title="Black Mirror S03 1080p WEB-DL", category="tv",
+                paths=["Black.Mirror.S03E01_Dub_RHS.mkv", "Black.Mirror.S03E02_Dub_RHS.mkv"],
+                data=black_mirror,
+            ),
+            torrent(
+                h="b" * 40, title="Black Mirror S04 1080p WEB-DL", category="tv",
+                paths=["Black.Mirror.S04E01_Dub_RHS.mkv"],
+                data=black_mirror,
+            ),
+            torrent(
+                h="c" * 40, title="Squid Game Season 02 1080p WEB-DL", category="tv",
+                paths=["Squid.Game.S02E01_RHS_1080p.mkv"],
+                data=squid_game,
+            ),
+            torrent(
+                h="d" * 40, title="Squid Game Season 03 1080p WEB-DL", category="tv",
+                paths=["Squid.Game.S03E01_RHS_1080p.mkv"],
+                data=squid_game,
+            ),
+        ]
+        client = FakeClient(items)
+        assert run(cfg(jr, kr), client) == 0
+
+        jelly_strms = list((jr / "tv" / "1080p").rglob("*.strm"))
+        kodi_strms = list((kr / "tv" / "1080p").rglob("*.strm"))
+        assert len(jelly_strms) == 5
+        assert len(kodi_strms) == 5
+        assert not any("Season 00" in p.parts for p in jelly_strms + kodi_strms)
+
+        expected = [
+            ("a" * 40, "Black.Mirror.S03E01_Dub_RHS.mkv", 3, 1),
+            ("a" * 40, "Black.Mirror.S03E02_Dub_RHS.mkv", 3, 2),
+            ("b" * 40, "Black.Mirror.S04E01_Dub_RHS.mkv", 4, 1),
+            ("c" * 40, "Squid.Game.S02E01_RHS_1080p.mkv", 2, 1),
+            ("d" * 40, "Squid.Game.S03E01_RHS_1080p.mkv", 3, 1),
+        ]
+        for torrent_hash, source_name, season, episode in expected:
+            jelly_strm = next(p for p in jelly_strms if p.name == source_name + ".strm")
+            assert f"Season {season:02d}" in jelly_strm.parts
+            jelly_nfo = jelly_strm.with_suffix(".nfo")
+            assert jelly_nfo.is_file()
+            nfo_text = jelly_nfo.read_text(encoding="utf-8")
+            assert f"<season>{season}</season>" in nfo_text
+            assert f"<episode>{episode}</episode>" in nfo_text
+
+            kodi_strm = next(
+                p for p in kodi_strms
+                if f"S{season:02d}E{episode:02d}" in p.name
+                and torrent_hash[:8] in p.name
+            )
+            assert f"Season {season:02d}" in kodi_strm.parts
 
 
 def test_quality_root_and_display_label_are_separate_and_quality_fallback_is_explicit():
