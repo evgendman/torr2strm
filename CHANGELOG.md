@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## Operational note — systemd timer schedule (2026-10-27)
 
-- Restore the monotonic systemd timer schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) after reviewing the 2026-10-27 evidence: the `NEXT=-` snapshot was captured while the Type=oneshot service was still running, and no post-completion snapshot established a re-arming failure. Keep `RandomizedDelaySec=15s` and `AccuracySec=1s`. Applied on reference MINI-Ubuntu on 2026-10-27; `systemd-analyze verify` passed, the timer is active/enabled, and post-run inspection confirmed the service exited 0 at 22:42:57 +05 (`torrents=431 quality_ready=431 quality_unresolved=0 created=0 updated=0 unchanged=862 failed=0`) while the timer remained armed for 22:45:20 +05. `NEXT=-` during an active oneshot run is not by itself evidence of a timer failure. No Python, manifest schema, or NFO format change.
+- The repository template and the published `v1.4.14` release both use the monotonic schedule: `OnBootSec=2min`, `OnUnitActiveSec=5min`, `RandomizedDelaySec=15s`, and `AccuracySec=1s`. The same settings were confirmed in `/etc/systemd/system/torr2strm.timer` on reference MINI-Ubuntu.
+- On 2026-10-27, the reference host's timer schedule was restored and verified. `systemd-analyze verify` passed. A post-completion inspection recorded `torr2strm.service` exiting with status 0 at 22:42:57 +05 (`torrents=431 quality_ready=431 quality_unresolved=0 created=0 updated=0 unchanged=862 failed=0`), with the timer active/enabled and the next trigger scheduled for 22:45:20 +05.
+- The earlier `NEXT=-` snapshot was taken while the `Type=oneshot` service was still activating/running. No post-completion snapshot of the prior setup established a re-arming failure, so this was a precautionary restoration of the intended schedule—not a confirmed defect fix. `NEXT=-` during an active oneshot run is not, by itself, evidence of timer failure.
+- This is an operational history note, not an unreleased application change: the published `v1.4.14` unit template already contains the schedule. No Python code, manifest schema v5, or NFO format v3 change was made.
 
 ## 1.4.14
 
