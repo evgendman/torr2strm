@@ -521,6 +521,43 @@ Apprise currently forwards most captured `WARNING` and `ERROR` log lines directl
 - Test unchanged-fingerprint suppression, clean-run reset, message-size limits, and existing Apprise gateway fields/tags.
 - Run the full automated suite and CI. Before live acceptance, use a dry run or controlled fixtures and confirm existing STRM/NFO trees and manifests are unchanged by notification-only changes.
 
+### Phase 19 — Reliable season and episode parsing from file paths and torrent titles
+
+**Status: planned; identified from reference TorrServer logs on 2026-10-29. No implementation or deployment is included in this roadmap update.**
+
+**Problem**
+
+The season/episode parser combines the file path and torrent title into one string and searches it as if both sources had the same semantics. For filenames such as `Black.Mirror.S03E01_Dub_...` and `Squid.Game.S02E01_RHS_...`, the word-boundary assertion after the episode number fails because underscore is a Python word character. The season-only fallback can then backtrack and match only `S0` inside `S03E01` or `S02E01`. Since the first match is accepted, the parser returns season 0 and never reaches the valid season marker in the torrent title.
+
+This was confirmed on 2026-10-29 for four releases: Black Mirror S03 (6 episodes), Black Mirror S04 (6), Squid Game S02 (7), and Squid Game S03 (6). Their Jellyfin and Kodi outputs were placed in `Season 00` despite the release titles containing explicit season markers. Ordinary dotted names such as `Lucifer.S02E01.1080p...` currently parse correctly and must remain so.
+
+**Planned behavior**
+
+- Parse sources independently. Do not concatenate a file path and torrent title into one undifferentiated string before determining which source supplied a match.
+- First parse complete season/episode coordinates from the file path. Support common separators after the episode number, including underscores, dots, and hyphens, without requiring a word boundary that rejects valid release filenames. Prevent partial-number matches and preserve safeguards against matching extra digits.
+- Parse season-only markers in the file path separately, including supported English forms such as `Season 3` and Russian directory names such as `3 сезон`. A season-only pattern must not partially match the season digits of an episode token such as `S03E01`.
+- Independently parse an explicit season marker from the TorrServer torrent title, including normalized forms such as `S03`, `[S03]`, and other deliberately supported title forms. Use this as a fallback when the file path does not provide a valid season, including when the episode number remains unknown. Do not allow a malformed or partial file-path match such as `S0` to suppress a valid title-level season.
+- Define and test deterministic behavior when valid season evidence conflicts between a file path and the torrent title. Do not silently treat an invalid partial match as stronger evidence than a valid explicit marker.
+- Keep torr2strm autonomous: all evidence must come from the TorrServer file paths and torrent title. Do not require the adapter to have produced the release, call the adapter, or add network/external metadata lookups. The adapter-normalized torrent title is a useful source when present, not a mandatory dependency.
+- Keep missing-season behavior unchanged when neither source supplies a valid season: use the existing `Season 00` fallback and retain a clear warning. Do not invent season or episode numbers.
+- Apply the shared parsing result consistently to Jellyfin season placement/NFO coordinates and Kodi season placement/episode basenames. Preserve the existing Jellyfin path/grouping algorithm otherwise, the Kodi tree and playback contract, manifests, and the NFO schema unless a separately justified format change is demonstrated.
+
+**Regression coverage**
+
+- Black Mirror S03/S04 paths with `S03E01_Dub_...` and `S04E01_...`; Squid Game S02/S03 paths with `S02E01_RHS_...` and `S03E01_RHS_...`. Assert seasons 3, 4, 2, and 3 respectively and correct episode numbers for all 25 reported episodes.
+- Normalized torrent titles containing `S03`, `[S03]`, `S04`, `[S02]`, or `[S03]` still provide the correct season when a filename does not supply one.
+- File paths containing Russian `N сезон` and English `Season N`; dotted filenames and the existing `Lucifer.S02E01.1080p...` control.
+- Standalone season markers must not partially match episode coordinates; explicitly cover the former `S03E01` → `S0` failure, adjacent digits, unsupported/ambiguous tokens, and conflicts between valid file-level and title-level season evidence.
+- Verify the inferred season is used consistently by Jellyfin and Kodi while the parser does not fabricate an episode number when only the season is known. Missing evidence must still reach `Season 00`.
+- Run the full regression suite and GitHub Actions. For later deployment acceptance, inspect a dry run before any live sync; no change to MINI-Ubuntu is part of this planning task.
+
+**Exit criteria**
+
+- All four reported release patterns resolve to their correct seasons, and their episodes no longer fall into `Season 00`.
+- A valid season in the torrent title is used when filename parsing cannot provide a valid season, without depending on the adapter or external services.
+- No partial-match regressions occur for existing valid filenames and season-only fallback cases.
+- Jellyfin/Kodi outputs, manifests, playback URLs, and current NFO contracts remain compatible; all regression tests and CI pass.
+
 ## 5. Explicit non-goals
 
 - Do not redesign Jellyfin's existing path/grouping or NFO behavior as part of Kodi normalization.
@@ -558,6 +595,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
 - [x] Phase 17 — Implemented and published in v1.4.14; installation and first live-run verification completed on reference MINI-Ubuntu on 2026-10-27. The dry run and live sync exited 0; the first live run was idempotent (`created=0 updated=0 unchanged=794 failed=0`). `CATEGORY_FALLBACK` was observed in the dry run. The fully missing-category/prior-manifest branch was not exercised by current live inventory and remains regression-tested; another scheduled no-op run remains pending.
 - [x] Phase 18 — Implemented in v1.4.13 and carried forward into installed v1.4.14. Apprise warning/critical routing was previously delivery-tested on the reference mini-PC on 2026-10-22; this upgrade preserved the existing notification configuration and state.
+- [ ] Phase 19 — Reliable season/episode parsing from file paths and torrent titles; regression cases identified from Black Mirror S03/S04 and Squid Game S02/S03 on 2026-10-29.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
@@ -614,6 +652,31 @@ The first live Apprise delivery on the mini-PC contained 22 `STRM_COLLISION_RESO
 ### Follow-up discovered during v1.4.10 acceptance
 
 The post-install dry run returned `created=0 updated=152 unchanged=152 failed=1` and logged `NFO_UPDATE` for 152 items because the generated-file header embedded application `VERSION`. In candidate v1.4.11, generated NFO headers omit that software version; the comparator also treats the legacy version token as non-semantic while preserving comparison of actual content and `NFO_FORMAT_VERSION`. Automated regression tests cover both an app-only bump and an intentional NFO format-version change; CI passed. Controlled reference mini-PC acceptance is pending.
+
+
+## 11. Season and episode parser reliability — Phase 19 (planned 2026-10-29)
+
+This is a planning record for a reproducible parser defect, not a statement that it is fixed.
+
+### Evidence
+
+- The installed parser's coordinate function combines `file.path` and `snap.title` into one string, then tests regular expressions over the combined text. The file path occurs first, so a bad match in the filename can prevent a valid season marker in the TorrServer title from being considered.
+- The current full-coordinate pattern requires a word boundary after the episode digits. This rejects valid patterns where the digits are followed by underscore, for example `S03E01_Dub_...` and `S02E01_RHS_...`.
+- The season-only fallback `S(\d{1,2})(?!\s*E\d)` can backtrack and accept only the first digit of the season, producing season 0 from `S03E01` or `S02E01`.
+- On 2026-10-29, local logs showed `SEASON_FALLBACK ... season=00` for 6 Black Mirror S03 files, 6 Black Mirror S04 files, 7 Squid Game S02 files, and 6 Squid Game S03 files. Corresponding `CREATE` records showed their Jellyfin and Kodi outputs under `Season 00`.
+- A dotted control filename, `Lucifer.S02E01.1080p.WEB-DL.5xRus.Eng.mkv`, parsed as season 2, episode 1 and must remain valid.
+
+### Implementation decision to preserve
+
+The torrent title is an independent fallback source, not a replacement for all filename parsing and not an adapter dependency. Prefer complete, valid episode coordinates from the file path; use explicit season information from the file path when available; then use a separately parsed, explicit season marker from the TorrServer torrent title if the file path has no valid season. Implementations must define deterministic handling for genuinely conflicting valid evidence and must reject partial matches such as `S0`. If neither source gives a valid season, retain the existing `Season 00` fallback.
+
+### Acceptance constraints
+
+- Add the regression cases listed in Phase 19 and verify season/episode extraction itself as well as the planned paths and Jellyfin NFO coordinates/Kodi episode names.
+- Keep all parsing local to TorrServer-provided title/path data. Do not add dependencies on the adapter, tracker names, remote metadata providers, or new HTTP calls.
+- Preserve current missing-season semantics, the Jellyfin grouping algorithm, Kodi/Elementum playback contract, manifest behavior, and NFO format unless testing establishes a separate necessary change.
+- Do not claim acceptance or deploy based solely on unit tests: a future implementation should pass CI, be reviewed in a dry run, and only then be considered for live acceptance.
+
 
 ## 10. v1.4.14 reference deployment acceptance — 2026-10-27
 
