@@ -4,6 +4,8 @@ TorrServer -> multiple materialized STRM/NFO trees.
 
 Development plan: [ROADMAP.md](ROADMAP.md).
 
+**Release status:** v1.4.15 was published and accepted on reference MINI-Ubuntu on 2026-10-29. The controlled live sync processed 635 torrents with zero failures; post-sync validation passed for both output manifests and the corrected season/episode paths. See [CHANGELOG.md](CHANGELOG.md) for the acceptance record.
+
 TorrServer is the sole source of truth. The service reads its category, metadata and FileStats, then materializes independent Jellyfin and Kodi/Elementum output trees. No external metadata provider is queried.
 
 ## Output model
