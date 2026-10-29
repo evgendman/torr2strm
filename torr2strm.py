@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""torr2strm 1.4.14 - TorrServer-only STRM/NFO materialization.
+"""torr2strm 1.4.15 - TorrServer-only STRM/NFO materialization.
 
 Key rules:
 - TorrServer is the sole source of torrent identity, category, metadata, and file inventory.
@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.14"
+VERSION = "1.4.15"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -633,23 +633,66 @@ def provider_ids_for_snapshot(snap: "TorrentSnapshot") -> dict[str, str]:
                 _put_provider_id(ids, kind, value)
     return ids
 
-def source_episode_coordinates(path_value: str, torrent_title: str) -> tuple[int | None, int | None]:
-    """Return a season/episode only when explicit coordinates can be parsed."""
-    text = f"{path_value} {torrent_title}"
+def _episode_coordinates_in_text(value: str) -> tuple[int, int] | None:
+    """Parse explicit episode coordinates from one source without mixing evidence."""
+    text = html.unescape(str(value or ""))
     patterns = (
-        r"(?i)\bS(\d{1,2})E(\d{1,4})(?:[-,]\d{1,4})?\b",
-        r"(?i)\b(\d{1,2})x(\d{1,4})\b",
+        # Accept punctuation separators (especially underscores) after the
+        # episode number, but never split adjacent digits or accept a token
+        # that continues into letters.
+        r"(?i)(?<![A-Z0-9])S(\d{1,2})[ ._-]*E(\d{1,4})(?:[-,](?:E)?\d{1,4})?(?=$|[./\\_\s:+,\-\[\](){}])",
+        r"(?i)(?<![A-Z0-9])(\d{1,2})x(\d{1,4})(?:[-,]\d{1,4})?(?=$|[./\\_\s:+,\-\[\](){}])",
     )
     for pattern in patterns:
         match = re.search(pattern, text)
         if match:
             return int(match.group(1)), int(match.group(2))
-    season = season_number(path_value, torrent_title)
-    if season is None:
-        season_match = re.search(r"(?i)\bS(\d{1,2})(?!\s*E\d)", text)
-        if season_match:
-            season = int(season_match.group(1))
-    return season, None
+    return None
+
+
+def _explicit_season_from_text(value: str) -> int | None:
+    """Return an explicit season from one source, without partial digit matches."""
+    text = html.unescape(str(value or ""))
+    coordinates = _episode_coordinates_in_text(text)
+    if coordinates is not None:
+        return coordinates[0]
+    patterns = (
+        r"(?i)(?<![A-Z0-9])Season[ ._-]*(\d{1,2})(?!\d)(?=$|[./\\_\s:+,\-\[\](){}])",
+        r"(?i)(?<![A-Z0-9])S(\d{1,2})(?!\d)(?=$|[./\\_\s:+,\-\[\](){}])",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def source_episode_coordinates(path_value: str, torrent_title: str) -> tuple[int | None, int | None]:
+    """Resolve coordinates from file path first, using title only as an independent fallback.
+
+    Precedence is intentionally source-aware:
+    1. Complete episode coordinates in the file path.
+    2. An explicit season in the file path (episode stays unknown).
+    3. Complete coordinates in the TorrServer torrent title.
+    4. An explicit season in the TorrServer torrent title.
+
+    A known season from the file path is not combined with an episode number from
+    the release title. This avoids assigning one title-level episode to every file
+    in a multi-file season pack.
+    """
+    path_coordinates = _episode_coordinates_in_text(path_value)
+    if path_coordinates is not None:
+        return path_coordinates
+
+    path_season = _explicit_season_from_text(path_value)
+    if path_season is not None:
+        return path_season, None
+
+    title_coordinates = _episode_coordinates_in_text(torrent_title)
+    if title_coordinates is not None:
+        return title_coordinates
+
+    return _explicit_season_from_text(torrent_title), None
 
 
 def display_year(metadata: dict[str, Any], title: str, *, tv: bool) -> str | None:
@@ -871,10 +914,8 @@ def append_common_stream_fields(node: Any, stream: dict[str, Any]) -> None:
 
 def nfo_episode_title(file_path: str) -> str:
     stem = Path(file_path).stem
-    episode_no = None
-    m = re.search(r"\bS\d{1,2}E(\d{1,4})\b", stem, flags=re.IGNORECASE)
-    if m:
-        episode_no = m.group(1)
+    coordinates = _episode_coordinates_in_text(stem)
+    episode_no = str(coordinates[1]) if coordinates is not None else None
     cleaned = re.sub(r"^.*?S\d{1,2}E\d{1,4}(?:[-_]\d{1,4})?[ ._-]*", "", stem, flags=re.IGNORECASE)
     cleaned = re.sub(r"^.*?\d{1,2}x\d{1,4}[ ._-]*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
@@ -1452,17 +1493,11 @@ def is_video(path_value: str, extensions: set[str]) -> bool:
 
 
 def season_number(path_value: str, torrent_title: str) -> int | None:
-    text = f"{path_value} {torrent_title}"
-    patterns = [
-        r"\bS(\d{1,2})E\d{1,3}\b",
-        r"\bSeason\s*(\d{1,2})\b",
-        r"\b(\d{1,2})x\d{1,3}\b",
-    ]
-    for pattern in patterns:
-        m = re.search(pattern, text, flags=re.IGNORECASE)
-        if m:
-            return int(m.group(1))
-    return None
+    """Resolve season from the file path before consulting the torrent title."""
+    path_season = _explicit_season_from_text(path_value)
+    if path_season is not None:
+        return path_season
+    return _explicit_season_from_text(torrent_title)
 
 
 def bounded_strm_leaf(value: str, identity: str) -> str:
