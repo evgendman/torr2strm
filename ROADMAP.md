@@ -1,7 +1,7 @@
 # torr2strm Development Roadmap
 
 > **v1.4.12 was published, installed, and accepted on the reference mini-PC on 2026-10-23.** GitHub Actions passed compilation and 49 regression tests. The controlled mini-PC sync verified the Kodi TV canonical-directory migration for all 10 episodes, preserved every STRM payload, and a second live run reported `created=0 updated=0 unchanged=304 failed=1` with no path, mode, `mtime`, or `ctime` changes across 3,401 inspected filesystem objects. Phases 14–16 are accepted for the tested scenarios. Jellyfin log review for 12:10–12:39 showed periodic Webhook notifier completion roughly every 91 seconds, with no explicit scan/refresh/watcher entries in the filtered lines; the dashboard showed the last full-library scan about four hours earlier (duration about one minute). This is reasonable acceptance evidence, not proof that no incremental refresh occurred. The timer was enabled at 12:52:38 +05 on 2026-10-23. Its immediate catch-up activation completed at 12:53:05 and two normal five-minute periodic activations ran 12:57:39–12:58:05 and 13:02:40–13:03:07. All three exited successfully with `created=0 updated=0 unchanged=304 failed=1`. Jellyfin's filtered log showed only its existing ~91-second Webhook notifier cadence and no explicit scan/refresh/watcher entries around either periodic cycle. No recurrence of the suspected scanning anomaly was observed during these two cycles; this does not prove that no incremental refresh occurred. Phase 10, the separate torr2jellyfin orchestration interface, remains deferred.
-> Candidate release status (2026-10-29): Phase 19 is implemented in the v1.4.15 candidate branch with source-aware season/episode parsing and regression coverage. GitHub Actions CI passed compilation and all 59 tests for PR #22. A full reference-host dry-run completed on MINI-Ubuntu with exit 0 across 635 torrents (329.25 seconds); it confirmed corrected season paths and expected Kodi filename reconciliation without writing output files or manifests. Live deployment acceptance is pending; v1.4.14 is still the installed release.
+> **v1.4.15 was published, installed, and accepted on reference MINI-Ubuntu on 2026-10-29.** GitHub Actions passed compilation and all 59 tests for PR #22. The official release archive checksum and installed-source SHA-256 were verified. A controlled live sync completed with exit status 0 across 635 torrents (`quality_ready=635 quality_unresolved=0 created=0 updated=15 unchanged=1255 failed=0`, 311.28 seconds). Post-sync validation passed for both 635-record manifests, all 33 corrected-season STRM targets in Jellyfin and Kodi, and Kodi episode numbering for X-Files S03 (24 episodes) and The Umbrella Academy S03 (10 episodes). The timer was restored and verified active/enabled. The dry-run's Jellyfin-removal logging gap remains a non-blocking follow-up; no second idempotency run is claimed.
 > Baseline: prior implementation v1.4.0.
 > Scope: STRM/NFO tree generation for Jellyfin and Kodi/Elementum. The separate `hotcached` project is out of scope.
 
@@ -523,7 +523,7 @@ Apprise currently forwards most captured `WARNING` and `ERROR` log lines directl
 
 ### Phase 19 — Reliable season and episode parsing from file paths and torrent titles
 
-**Status: planned; identified from reference TorrServer logs on 2026-10-29. No implementation or deployment is included in this roadmap update.**
+**Status: implemented in v1.4.15, published, installed, and accepted on reference MINI-Ubuntu on 2026-10-29.** See [PR #22](https://github.com/evgendman/torr2strm/pull/22) and the [v1.4.15 release](https://github.com/evgendman/torr2strm/releases/tag/v1.4.15).
 
 **Problem**
 
@@ -595,7 +595,7 @@ The follow-up is complete when the independent Kodi tree groups identified relea
 - [x] Phase 16 — Avoid redundant `chmod` on unchanged STRM/NFO files, output roots and manifest directories; preserve modes `0666`/`0777`, add permission-mode regressions, and perform controlled no-op sync/Jellyfin watcher acceptance. CI passed. On 2026-10-23, the second live run reported `created=0 updated=0 unchanged=304 failed=1`; 3,401 filesystem objects showed no path, mode, `mtime`, or `ctime` changes. Jellyfin logs for 12:10–12:39 showed only periodic Webhook notifier completions in the filtered output; the dashboard showed a full-library scan about four hours earlier, lasting about one minute. Accepted for the tested scenarios; periodic Webhook messages do not prove repeated media additions or a full-library scan.
 - [x] Phase 17 — Implemented and published in v1.4.14; installation and first live-run verification completed on reference MINI-Ubuntu on 2026-10-27. The dry run and live sync exited 0; the first live run was idempotent (`created=0 updated=0 unchanged=794 failed=0`). `CATEGORY_FALLBACK` was observed in the dry run. The fully missing-category/prior-manifest branch was not exercised by current live inventory and remains regression-tested; another scheduled no-op run remains pending.
 - [x] Phase 18 — Implemented in v1.4.13 and carried forward into installed v1.4.14. Apprise warning/critical routing was previously delivery-tested on the reference mini-PC on 2026-10-22; this upgrade preserved the existing notification configuration and state.
-- [x] Phase 19 — Implemented in v1.4.15 with independent path/title parsing and regression tests for Black Mirror S03/S04 and Squid Game S02/S03. GitHub Actions passed all 59 tests; the full reference-host dry-run completed successfully on 2026-10-29 (`torrents=635 quality_ready=635 quality_unresolved=0 created=0 updated=15 unchanged=1255 failed=0`, elapsed 329.25 seconds). It showed the intended corrections for Black Mirror, Squid Game, and The Witcher, plus Kodi filename reconciliation for X-Files and The Umbrella Academy. Live deployment acceptance remains pending.
+- [x] Phase 19 — Implemented and accepted in v1.4.15 on reference MINI-Ubuntu (2026-10-29). CI passed all 59 tests; the full dry-run and controlled live sync both passed. Live result: `torrents=635 quality_ready=635 quality_unresolved=0 created=0 updated=15 unchanged=1255 failed=0` in 311.28 seconds. The validator confirmed the corrected Black Mirror, Squid Game, and The Witcher season paths in both outputs, with no target `Season 00` paths; Kodi X-Files S03 and The Umbrella Academy S03 episode numbering also passed.
 - [x] Phase 11 — Isolate temporary per-torrent metadata/FileStats failures while preserving existing output trees and synchronizing healthy torrents (v1.4.8; CI passed, mini-PC acceptance pending)
 - [x] Phase 12 — Resolve Jellyfin STRM filename collisions without redesigning its directory tree (v1.4.9 implementation, CI and mini-PC acceptance completed 2026-10-22)
 
@@ -661,9 +661,9 @@ The post-install dry run returned `created=0 updated=152 unchanged=152 failed=1`
 - [x] Applied and verified the monotonic timer restoration on MINI-Ubuntu. The service completed at 22:42:57 +05 with exit status 0; `torr2strm.timer` was active/enabled and the next trigger was scheduled for 22:45:20 +05.
 - The timer-template reversion is merged on main and the original monotonic schedule is restored on MINI-Ubuntu. The published v1.4.14 tag/archive already contains this timer schedule; no new application release is needed to restore it on the host. This is an operational scheduling choice, not a confirmed fix for a proven defect. No Python app version, manifest schema v5, or NFO format v3 change is made.
 
-## 11. Season and episode parser reliability — Phase 19 (v1.4.15 candidate, prepared 2026-10-29)
+## 11. Season and episode parser reliability — Phase 19 (v1.4.15, released and accepted 2026-10-29)
 
-Implementation is prepared in the v1.4.15 candidate branch. Automated CI and full reference-host dry-run have passed; live deployment acceptance remains pending.
+The implementation is published and installed on reference MINI-Ubuntu. Automated CI, the full reference-host dry-run, the controlled live sync, and explicit post-sync path/episode validation passed. The live sync exited successfully after 311.28 seconds with zero failed torrents.
 
 ### Evidence
 
@@ -683,7 +683,7 @@ The torrent title is an independent fallback source, not a replacement for filen
 - Keep all parsing local to TorrServer-provided title/path data. Do not add dependencies on the adapter, tracker names, remote metadata providers, or new HTTP calls.
 - Preserve current missing-season semantics, the Jellyfin grouping algorithm, Kodi/Elementum playback contract, manifest behavior, and NFO format unless testing establishes a separate necessary change.
 - The v1.4.15 full dry-run on MINI-Ubuntu completed without writing output files or manifests, but it did not report planned Jellyfin removals. The code path logs Jellyfin STRM/NFO removals only when not in dry-run mode, so the output did not expose those planned operations for review. This is a known dry-run observability gap; it does not invalidate the parser checks, but leaves the Jellyfin removal plan less complete than the Kodi plan.
-- Do not claim live acceptance based solely on unit tests or dry-run: the release should still receive a controlled live-sync/idempotency check after deployment.
+- Live deployment acceptance was completed on 2026-10-29: the controlled sync returned exit status 0 and `failed=0`; both output manifests and the corrected season paths passed post-sync validation. A separate second no-op/idempotency run has not been included in this acceptance record.
 
 ### Post-release follow-up — expose planned Jellyfin removals in dry-run (non-blocking for v1.4.15)
 
@@ -691,7 +691,7 @@ During the full reference-host dry-run on 2026-10-29, the Kodi reconciler logged
 
 - [ ] Improve dry-run logging so it reports the Jellyfin STRM and NFO removals that a live sync would perform, without performing those removals.
 - [ ] Add regression tests asserting that dry-run emits the planned Jellyfin removal events and does not mutate files or manifests.
-- [ ] Use the complete dry-run plan (including removals for both outputs) as a pre-live review artifact.
+- [ ] Use the complete dry-run plan (including removals for both outputs) as a pre-live review artifact for a future release that needs the improved auditability.
 
 This follow-up is intentionally **non-blocking for v1.4.15**: the current candidate passed CI and the full reference-host dry-run, the parser/path results were reviewed, and the dry-run did not write output trees or manifests. Complete Jellyfin removal visibility before a future release that needs the improved auditability; do not silently present the current dry-run log as a complete inventory of planned Jellyfin operations.
 
