@@ -8,6 +8,14 @@
 - Add parser regressions and an end-to-end check of Black Mirror S03/S04 and Squid Game S02/S03 through Jellyfin season directories/NFO coordinates and Kodi episode filenames.
 - Keep Season 00 fallback behavior, output layout contracts, manifest schema v5, NFO format v3, and the TorrServer-only/no-new-HTTP-call policy unchanged.
 
+## Operational note — v1.4.15 reference-host acceptance (2026-10-29)
+
+- The official release archive checksum and deployed source SHA-256 were verified; the installed version reports `1.4.15`.
+- A controlled live sync on reference MINI-Ubuntu exited successfully: `torrents=635 quality_ready=635 quality_unresolved=0 created=0 updated=15 unchanged=1255 failed=0`, elapsed 311.28 seconds.
+- Post-sync validation passed for both output manifests (635 records each), all 33 corrected-season STRM targets in the Jellyfin and Kodi trees, and absence of target `Season 00` paths. Kodi numbering checks passed for X-Files S03 (24 episodes, 01–24) and The Umbrella Academy S03 (10 episodes, 01–10).
+- The timer was restored and verified active/enabled. The existing configuration was preserved and a pre-deployment backup was created. Manifest format v5 and NFO format v3 remain unchanged.
+- This records successful initial live deployment acceptance; a separate second no-op/idempotency run has not been claimed.
+
 ## Operational note — systemd timer schedule (2026-10-27)
 
 - The repository template and the published `v1.4.14` release both use the monotonic schedule: `OnBootSec=2min`, `OnUnitActiveSec=5min`, `RandomizedDelaySec=15s`, and `AccuracySec=1s`. The same settings were confirmed in `/etc/systemd/system/torr2strm.timer` on reference MINI-Ubuntu.
