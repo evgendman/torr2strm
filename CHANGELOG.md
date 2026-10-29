@@ -12,7 +12,7 @@
 
 - The official release archive checksum and deployed source SHA-256 were verified; the installed version reports `1.4.15`.
 - A controlled live sync on reference MINI-Ubuntu exited successfully: `torrents=635 quality_ready=635 quality_unresolved=0 created=0 updated=15 unchanged=1255 failed=0`, elapsed 311.28 seconds.
-- Post-sync validation passed for both output manifests (635 records each), all 33 corrected-season STRM targets in the Jellyfin and Kodi trees, and absence of target `Season 00` paths. Kodi numbering checks passed for X-Files S03 (24 episodes, 01–24) and The Umbrella Academy S03 (10 episodes, 01–10).
+- Post-sync validation passed for both output manifests (635 records each), all 33 corrected-season STRMs in each of the Jellyfin and Kodi output trees, and absence of target `Season 00` paths. Kodi numbering checks passed for X-Files S03 (24 episodes, 01–24) and The Umbrella Academy S03 (10 episodes, 01–10).
 - The timer was restored and verified active/enabled. The existing configuration was preserved and a pre-deployment backup was created. Manifest format v5 and NFO format v3 remain unchanged.
 - This records successful initial live deployment acceptance; a separate second no-op/idempotency run has not been claimed.
 
