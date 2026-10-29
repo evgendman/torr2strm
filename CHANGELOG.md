@@ -3,8 +3,8 @@
 ## 1.4.15
 
 - Fix season/episode parsing by evaluating TorrServer file paths and torrent titles as independent sources. Complete coordinates in a file path take precedence; an explicit path season is preserved before any title-level fallback is considered.
-- Recognize valid episode coordinates when the episode digits are followed by underscores, dots, hyphens, whitespace, or brackets, including patterns such as \`S03E01_Dub\` and \`S02E01_RHS\`.
-- Reject partial digit matches and malformed/ambiguous tokens so \`S03E01\` cannot degrade into season zero. Do not copy an episode number from the torrent title into a file that already has its own explicit season but no episode coordinate.
+- Recognize valid episode coordinates when the episode digits are followed by underscores, dots, hyphens, whitespace, or brackets, including patterns such as `S03E01_Dub` and `S02E01_RHS`.
+- Reject partial digit matches and malformed/ambiguous tokens so `S03E01` cannot degrade into season zero. Do not copy an episode number from the torrent title into a file that already has its own explicit season but no episode coordinate.
 - Add parser regressions and an end-to-end check of Black Mirror S03/S04 and Squid Game S02/S03 through Jellyfin season directories/NFO coordinates and Kodi episode filenames.
 - Keep Season 00 fallback behavior, output layout contracts, manifest schema v5, NFO format v3, and the TorrServer-only/no-new-HTTP-call policy unchanged.
 
