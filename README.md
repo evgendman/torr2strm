@@ -4,7 +4,7 @@ TorrServer -> multiple materialized STRM/NFO trees.
 
 Development plan: [ROADMAP.md](ROADMAP.md).
 
-**Release status:** v1.4.16 has passed GitHub Actions CI (66 tests) and reference MINI-Ubuntu acceptance in temporary copies of the existing Jellyfin/Kodi output trees. The cache, no-op fast path, and self-repair checks passed without changing production output files. Official publication and installation on the reference host are pending; the host remains on v1.4.15 until installation is completed. See [CHANGELOG.md](CHANGELOG.md) for the acceptance record.
+**Release status:** v1.4.16 was published on GitHub on 2026-10-30. GitHub Actions CI passed all 66 tests; the official archive checksum and bundled test suite were verified on reference MINI-Ubuntu. Copy-based acceptance of the existing Jellyfin/Kodi output trees passed, including cache reuse, fast-path and self-repair checks. Production installation is pending; the reference host remains on v1.4.15 until deployment is completed. See [CHANGELOG.md](CHANGELOG.md) for the acceptance record.
 
 TorrServer is the sole source of truth. The service reads its category, metadata and FileStats, then materializes independent Jellyfin and Kodi/Elementum output trees. A persistent cache stores only immutable FileStats inventory; mutable title/category/custom metadata continue to come from the current TorrServer list. No external metadata provider is queried.
 
