@@ -698,7 +698,7 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 
 ## Phase 20 — Reduce redundant TorrServer detail requests and cache immutable FileStats (v1.4.16)
 
-**Status: implementation committed to main; automated CI and reference-host acceptance are pending.** This phase responds to the 2026-10-29 reference-host run, which processed 635 torrents in 311.28 seconds, and the five-minute service cadence. The goal is to prevent a growing library of unchanged torrents from spending most of each synchronization interval on repeated detail retrieval.
+**Status: implementation, automated CI, and reference-host copy-based acceptance completed; official publication and production installation pending.** This phase responds to the 2026-10-29 reference-host run, which processed 635 torrents in 311.28 seconds, and the five-minute service cadence. The goal is to prevent a growing library of unchanged torrents from spending most of each synchronization interval on repeated detail retrieval.
 
 ### Problem and code findings
 
@@ -728,8 +728,9 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - [x] Add cache configuration, systemd state directory, and source-request/cache counters.
 - [x] Add a whole-inventory projection signature and FAST_PATH guarded by output manifest and managed-file integrity checks.
 - [x] Validate shared tvshow.nfo content hashes and reject symlinked managed output paths before using FAST_PATH.
-- [x] Add regressions for direct list FileStats, cache reuse with changed mutable metadata, invalid-cache recovery, disappearance pruning, fast-path entry, STRM repair and tvshow.nfo repair.
-- [x] GitHub Actions CI passed on 2026-10-30: Python compileall and all 65 regression tests passed.
+- [x] Add regressions for direct list FileStats, cache reuse with changed mutable metadata, invalid-cache recovery, disappearance pruning, fast-path entry, STRM repair, tvshow.nfo repair, and persisted NFO hashes when version-only headers are intentionally preserved.
+- [x] Ensure manifest NFO hashes describe the actual bytes retained on disk when `_write_nfo()` skips a version-only header rewrite; cover Jellyfin and Kodi item/shared NFO paths.
+- [x] GitHub Actions CI passed on 2026-10-30: Python compileall and all 66 regression tests passed.
 
 ### Regression coverage and acceptance
 
@@ -742,6 +743,14 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - Existing category-defer, missing-output repair, source-disappearance cleanup, Jellyfin reverse-delete, Kodi read-only, and repeated-run idempotency regressions continue to pass.
 
 ### Exit criteria
+
+- [x] Python compilation and the complete automated regression suite pass in GitHub Actions (66 tests passed on 2026-10-30).
+- [x] Manifest schema v5 and NFO format v3 remain compatible; no migration or clean rebuild is required.
+- [x] On MINI-Ubuntu, dry-run and isolated cache warm-up runs report source-request counters. A second cache-warmed run eliminates all `action=get`, `/playlist`, and metadata-poll requests for the 635-entry inventory.
+- [x] A copy of the existing production output trees was reconciled with no STRM/NFO content, path, mtime, or permission changes. Only the two manifests received the expected integrity-hash additions; the next run entered `FAST_PATH=true`.
+- [x] Self-repair was exercised by deleting a managed STRM and modifying a shared tvshow.nfo; full reconciliation repaired both, and the next run returned to the fast path.
+- [x] Source-disappearance cleanup and opt-in Jellyfin reverse deletion remain covered by passing regression tests (`test_source_cache_prunes_only_after_confirmed_inventory_disappearance`, `test_jellyfin_reverse_delete_is_authoritative_and_kodi_is_skipped`).
+- [ ] Publish v1.4.16 and install it on reference MINI-Ubuntu; verify the installed version, first production sync and persistent cache before restarting the enabled timer.
 
 - [x] Python compilation and the complete automated regression suite pass in GitHub Actions (65 tests passed on 2026-10-30).
 - [ ] CI confirms manifest schema v5 and NFO format v3 remain compatible; no migration or clean rebuild is required.
