@@ -8,7 +8,6 @@
 - Keep source-cache failures recoverable and prune entries only after a successful inventory confirms that a torrent disappeared.
 - Add source-request/cache counters to the `DONE` summary and regressions for direct list FileStats, cache reuse, mutable metadata refresh, invalid-cache recovery, and disappearance pruning.
 - Add a guarded whole-inventory fast path: skip quality/NFO resolution and output regeneration only when the complete input/config signature matches and every managed STRM/NFO remains intact; missing or modified files trigger normal self-repair. Verify shared tvshow.nfo content hashes and reject symlinked managed paths before fast-path entry.
-- Add a guarded whole-inventory fast path: skip quality/NFO resolution and output regeneration only when the complete input/config signature matches and every managed STRM/NFO remains intact; missing or modified files trigger normal self-repair.
 - Keep manifest schema v5, NFO format v3, media-tree contracts, output reconciliation, and reverse-deletion safety unchanged.
 
 ### v1.4.16 candidate validation — 2026-10-30
@@ -20,6 +19,7 @@
 - A production-like compatibility check used temporary copies of the current Jellyfin/Kodi output trees and manifests. The v1.4.16 reconciliation added no paths, removed no paths, and changed no STRM/NFO content, mtimes, or permissions; only the two manifests were updated with the new integrity hashes. A follow-up run completed in 2.46 seconds with `FAST_PATH=true`, `get=0,playlist=0,polls=0,cache_hits=618`, `unchanged=1270`, and `failed=0`.
 - The production `/etc/torr2strm/config.toml` and both production manifests retained their pre-test SHA-256 values. The reference host remains on v1.4.15 pending installation; its timer is enabled but currently stopped. No production output tree or TorrServer inventory was changed during candidate acceptance.
 - Manifest schema v5 and NFO format v3 remain unchanged. No clean rebuild or output-tree migration is required.
+
 ## 1.4.15
 
 - Fix season/episode parsing by evaluating TorrServer file paths and torrent titles as independent sources. Complete coordinates in a file path take precedence; an explicit path season is preserved before any title-level fallback is considered.
