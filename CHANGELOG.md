@@ -10,9 +10,10 @@
 - Add a guarded whole-inventory fast path: skip quality/NFO resolution and output regeneration only when the complete input/config signature matches and every managed STRM/NFO remains intact; missing or modified files trigger normal self-repair. Verify shared tvshow.nfo content hashes and reject symlinked managed paths before fast-path entry.
 - Keep manifest schema v5, NFO format v3, media-tree contracts, output reconciliation, and reverse-deletion safety unchanged.
 
-### v1.4.16 candidate validation — 2026-10-30
+### v1.4.16 release and reference acceptance — 2026-10-30
 
 - Final GitHub Actions CI passed on commit `4ed684ea1ae2a67fae686ff81c857133bf6cb7ea`: Python compilation and all 66 regression tests passed.
+- The official GitHub Release `v1.4.16` was published successfully. On MINI-Ubuntu, the release archive passed the published `SHA256SUMS` check (`5d55324493987ee4c46e8756e49aa626a3e03e22b43c553aa3872c36c0ae3112`); compilation and all 66 tests in the extracted official archive passed.
 - Reference MINI-Ubuntu dry-run processed all 635 TorrServer inventory entries with `quality_ready=635` and `failed=0`. The initial cache-empty pass reported `list=1,get=1236,playlist=618,polls=618,cache_hits=0,cache_misses=618`; the 7 embedded and 10 top-level FileStats entries came directly from `action=list`.
 - An isolated cache warm-up against the live TorrServer populated 635 cache entries. The second run completed in 2.62 seconds with `get=0,playlist=0,polls=0,cache_hits=594,cache_misses=0,list_embedded=7,list_file_stats=34`, `unchanged=1270`, and `failed=0`.
 - A self-repair check deliberately removed a managed STRM and modified a shared Kodi `tvshow.nfo` in the isolated output tree. The fast path declined, full reconciliation restored both files, and the following run re-entered the fast path.
