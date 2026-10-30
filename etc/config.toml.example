@@ -1,4 +1,4 @@
-# torr2strm v1.4.10
+# torr2strm v1.4.16
 # Two independent materialized trees are generated from one TorrServer source.
 # Jellyfin keeps the existing default root below; Kodi/Elementum gets a second root.
 
@@ -28,6 +28,9 @@ manifest = ".torr2strm/manifest.json"
 enabled = true
 
 [sync]
+# Persistent source-file inventory cache. Only immutable FileStats are stored.
+source_cache_path = "/var/lib/torr2strm/source_cache.json"
+
 # Season used when a TV episode cannot be inferred from its file path/title.
 # 0 maps to Jellyfin/Kodi Specials semantics.
 tv_unmatched_season = 0

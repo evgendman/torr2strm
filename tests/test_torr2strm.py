@@ -46,6 +46,7 @@ class FakeClient:
     def __init__(self, torrents, probes=None):
         self.torrents = {t["Hash"]: t for t in torrents}
         self.removed = []
+        self.get_calls = []
         self.probes = probes or {}
         self.ffprobe_calls = []
 
@@ -56,6 +57,7 @@ class FakeClient:
         ]
 
     def get_torrent(self, h):
+        self.get_calls.append(h)
         from torr2strm import TorrServerNotFound
         if h not in self.torrents:
             raise TorrServerNotFound(h)
@@ -132,6 +134,7 @@ def cfg(jelly_root, kodi_root, remove=False):
         "sync": {
             "tv_unmatched_season": 0,
             "video_extensions": {".mkv", ".mp4"},
+            "source_cache_path": str(Path(jelly_root).parent / "source_cache.json"),
         },
         "quality": {"timeout_sec": 2, "retries": 0},
         "notifications": {
@@ -219,6 +222,103 @@ def probe(width=1920, height=1080, codec="h264", audio=True, hdr=None):
 
 def run(cfg_data, client):
     return SyncCoordinator(cfg_data, client, dry_run=False).run()
+
+
+def test_action_list_top_level_file_stats_are_used_without_action_get():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        h = "1" * 40
+        source = torrent(
+            h=h, title="List Inventory Film 2025", category="movie",
+            paths=["Film.mkv", "Film.en.srt"], data={"tmdbId": 1124},
+        )
+
+        class ListFileStatsClient(FakeClient):
+            def list_torrents(self):
+                return [dict(self.torrents[h])]
+
+        client = ListFileStatsClient([source])
+        coordinator = SyncCoordinator(cfg(base / "jelly", base / "kodi"), client, dry_run=True)
+        snapshots, deferred = coordinator._get_snapshot_list()
+
+        assert deferred == set()
+        assert len(snapshots) == 1
+        assert [item.path for item in sorted(snapshots[0].files, key=lambda value: value.order)] == [
+            "Film.mkv", "Film.en.srt",
+        ]
+        assert client.get_calls == []
+        assert coordinator.source_stats["list_file_stats"] == 1
+        assert h in coordinator.source_cache_records
+
+
+def test_source_cache_reuses_file_stats_but_refreshes_mutable_list_metadata():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        h = "2" * 40
+        source = torrent(
+            h=h, title="Original Film 2025", category="movie",
+            paths=["Original.Film.mkv", "Original.Film.en.srt"], data={"tmdbId": 1124},
+        )
+        client = FakeClient([source])
+        config = cfg(base / "jelly", base / "kodi")
+
+        assert run(config, client) == 0
+        assert client.get_calls == [h]
+
+        cache_path = Path(config["sync"]["source_cache_path"])
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert cached["version"] == torr2strm_module.SOURCE_CACHE_VERSION
+        assert set(cached["torrents"][h]) == {"files", "files_sha256"}
+        assert len(cached["torrents"][h]["files"]) == 2
+
+        client.torrents[h]["Title"] = "Renamed Film 2025"
+        client.torrents[h]["Data"] = json.dumps({"tmdbId": 9876}, ensure_ascii=False)
+        coordinator = SyncCoordinator(config, client, dry_run=False)
+        assert coordinator.run() == 0
+
+        assert client.get_calls == [h]
+        assert coordinator.source_stats["source_cache_hits"] == 1
+        for root in (base / "jelly", base / "kodi"):
+            manifest = json.loads((root / ".torr2strm" / "manifest.json").read_text(encoding="utf-8"))
+            record = manifest["torrents"][h]
+            assert record["title"] == "Renamed Film 2025"
+            assert record["metadata"]["tmdbid"] == "9876"
+
+
+def test_invalid_source_cache_falls_back_to_torrserver_and_rebuilds():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        h = "3" * 40
+        source = torrent(h=h, title="Cache Recovery Film", category="movie", data={"tmdbId": 1124})
+        client = FakeClient([source])
+        config = cfg(base / "jelly", base / "kodi")
+        cache_path = Path(config["sync"]["source_cache_path"])
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text('{"version": 999, "torrents": {}}', encoding="utf-8")
+
+        assert run(config, client) == 0
+        assert client.get_calls == [h]
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert cache["version"] == torr2strm_module.SOURCE_CACHE_VERSION
+        assert h in cache["torrents"]
+
+
+def test_source_cache_prunes_only_after_confirmed_inventory_disappearance():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        h = "4" * 40
+        source = torrent(h=h, title="Disappearing Film", category="movie", data={"tmdbId": 1124})
+        client = FakeClient([source])
+        config = cfg(base / "jelly", base / "kodi")
+
+        assert run(config, client) == 0
+        cache_path = Path(config["sync"]["source_cache_path"])
+        assert h in json.loads(cache_path.read_text(encoding="utf-8"))["torrents"]
+
+        client.torrents.pop(h)
+        assert run(config, client) == 0
+        cache = json.loads(cache_path.read_text(encoding="utf-8"))
+        assert cache["torrents"] == {}
 
 
 def test_extract_btih_accepts_magnet():

@@ -16,7 +16,7 @@ fi
 systemctl stop torr2strm.timer >/dev/null 2>&1 || true
 systemctl stop torr2strm.service >/dev/null 2>&1 || true
 
-install -d -m 0755 /opt/torr2strm /etc/torr2strm
+install -d -m 0755 /opt/torr2strm /etc/torr2strm /var/lib/torr2strm
 install -m 0755 "$SRC_DIR/torr2strm.py" /opt/torr2strm/torr2strm.py
 install -m 0644 "$SRC_DIR/etc/config.toml.example" /etc/torr2strm/config.toml.example
 install -m 0644 "$SRC_DIR/systemd/torr2strm.service" /etc/systemd/system/torr2strm.service

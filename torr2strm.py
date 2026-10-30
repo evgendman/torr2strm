@@ -37,7 +37,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
 from typing import Any
 
-VERSION = "1.4.15"
+VERSION = "1.4.16"
 KODI_COMPONENT_MAX_BYTES = 255
 MANIFEST_VERSION = 5
 NFO_FORMAT_VERSION = 3
@@ -1419,6 +1419,12 @@ def extract_list_embedded_torrent(item: dict[str, Any]) -> dict[str, Any] | None
     return embedded if isinstance(raw_files, list) and raw_files else None
 
 
+def extract_list_file_stats(item: dict[str, Any]) -> list[Any] | None:
+    """Return FileStats already present on the top-level action=list status object."""
+    raw_files = get_field(item, "filestats", "files", default=None)
+    return raw_files if isinstance(raw_files, list) and raw_files else None
+
+
 _TRUSTED_TORRSERVER_CATEGORIES = frozenset({"movie", "tv"})
 
 
@@ -1675,6 +1681,97 @@ def write_manifest_if_changed(path: Path, data: dict[str, Any]) -> bool:
     if path.exists() and path.read_text(encoding="utf-8") == encoded:
         return False
     atomic_write_text(path, encoded)
+    return True
+
+
+SOURCE_CACHE_VERSION = 1
+
+
+def source_cache_record(snapshot: TorrentSnapshot) -> dict[str, Any]:
+    """Serialize the complete, immutable TorrServer file inventory for one infohash."""
+    files = [
+        {"id": item.file_id, "path": item.path, "length": item.length, "order": item.order}
+        for item in sorted(snapshot.files, key=lambda value: value.order)
+    ]
+    encoded = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"files": files, "files_sha256": sha256_text(encoded)}
+
+
+def cached_file_stats(record: Any) -> list[dict[str, Any]] | None:
+    """Validate cached FileStats before using them to reconstruct a current snapshot."""
+    if not isinstance(record, dict):
+        return None
+    raw_files = record.get("files")
+    if not isinstance(raw_files, list) or not raw_files:
+        return None
+
+    files: list[dict[str, Any]] = []
+    ids: set[int] = set()
+    paths: set[str] = set()
+    orders: set[int] = set()
+    try:
+        for row in raw_files:
+            if not isinstance(row, dict):
+                return None
+            file_id = int(row.get("id"))
+            path = validate_relative_torrent_path(row.get("path")).as_posix()
+            length = int(row.get("length"))
+            order = int(row.get("order"))
+            if file_id <= 0 or length < 0 or order < 0:
+                return None
+            if file_id in ids or path in paths or order in orders:
+                return None
+            ids.add(file_id)
+            paths.add(path)
+            orders.add(order)
+            files.append({"id": file_id, "path": path, "length": length, "order": order})
+    except (TypeError, ValueError):
+        return None
+
+    if not files or sorted(orders) != list(range(len(files))):
+        return None
+    files.sort(key=lambda value: value["order"])
+    encoded = json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if record.get("files_sha256") != sha256_text(encoded):
+        return None
+    return [
+        {"Id": value["id"], "Path": value["path"], "Length": value["length"]}
+        for value in files
+    ]
+
+
+def _empty_source_cache(torrserver_url: str) -> dict[str, Any]:
+    return {"version": SOURCE_CACHE_VERSION, "torrserver_url": torrserver_url, "torrents": {}}
+
+
+def load_source_cache(path: Path, torrserver_url: str) -> dict[str, Any]:
+    """Load non-authoritative source-file state; a bad cache degrades to cache misses."""
+    if not path.exists():
+        return _empty_source_cache(torrserver_url)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        LOG.warning("SOURCE_CACHE_UNUSABLE path=%s reason=%s; rebuilding from TorrServer", path, exc)
+        return _empty_source_cache(torrserver_url)
+
+    if not isinstance(data, dict) or data.get("version") != SOURCE_CACHE_VERSION:
+        LOG.warning("SOURCE_CACHE_VERSION_MISMATCH path=%s expected=%d; rebuilding from TorrServer", path, SOURCE_CACHE_VERSION)
+        return _empty_source_cache(torrserver_url)
+    if data.get("torrserver_url") != torrserver_url:
+        LOG.warning("SOURCE_CACHE_SERVER_MISMATCH path=%s cached=%r current=%r; rebuilding from TorrServer", path, data.get("torrserver_url"), torrserver_url)
+        return _empty_source_cache(torrserver_url)
+    torrents = data.get("torrents")
+    if not isinstance(torrents, dict):
+        LOG.warning("SOURCE_CACHE_UNUSABLE path=%s reason=invalid_torrents_map; rebuilding from TorrServer", path)
+        return _empty_source_cache(torrserver_url)
+    return {"version": SOURCE_CACHE_VERSION, "torrserver_url": torrserver_url, "torrents": torrents}
+
+
+def write_source_cache_if_changed(path: Path, data: dict[str, Any]) -> bool:
+    encoded = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if path.exists() and path.read_text(encoding="utf-8") == encoded:
+        return False
+    atomic_write_text(path, encoded, mode=0o600)
     return True
 
 
@@ -2912,6 +3009,12 @@ class SyncCoordinator:
         self.client = client
         self.dry_run = dry_run
         self.notification_capture = notification_capture
+        self.source_cache_path = Path(
+            cfg["sync"].get("source_cache_path", "/var/lib/torr2strm/source_cache.json")
+        ).expanduser()
+        self.source_cache_records: dict[str, Any] = {}
+        self.source_inventory_hashes: set[str] = set()
+        self.source_stats: dict[str, int] = {}
         self.outputs: list[OutputRunner] = []
         for name in ("jellyfin", "kodi"):
             raw = cfg["outputs"][name]
@@ -2935,6 +3038,12 @@ class SyncCoordinator:
     ) -> tuple[list[TorrentSnapshot], set[str]]:
         """Isolate recoverable per-torrent errors and protect prior paths from uncertain categories."""
         previous_categories = previous_categories or {}
+        self.source_stats = {
+            "action_list": 0, "action_get": 0, "playlist_loads": 0,
+            "metadata_poll_gets": 0, "list_embedded": 0, "list_file_stats": 0,
+            "source_cache_hits": 0, "source_cache_misses": 0,
+        }
+        self.source_stats["action_list"] += 1
         raw_list = self.client.list_torrents()
         inventory: list[tuple[dict[str, Any], str]] = []
         for item in raw_list:
@@ -2967,6 +3076,9 @@ class SyncCoordinator:
                     "CATEGORY_UNRESOLVED hash=%s title=%r stage=%s disposition=uncategorized",
                     snapshot.hash, snapshot.title, stage,
                 )
+            # FileStats is immutable for a given BitTorrent infohash. Cache the
+            # complete source inventory even when category resolution defers output.
+            self.source_cache_records[snapshot.hash] = source_cache_record(snapshot)
             snapshots.append(snapshot)
             if self.notification_capture is not None:
                 self.notification_capture.register_title(snapshot.hash, snapshot.title)
@@ -2984,15 +3096,56 @@ class SyncCoordinator:
                     )
                     try:
                         snapshot = parse_snapshot(merged, h)
+                        self.source_stats["list_embedded"] += 1
                         accept_snapshot(snapshot, category_value, stage)
                         continue
                     except ValueError as exc:
                         LOG.warning(
-                            "LIST_EMBEDDED_METADATA_UNUSABLE hash=%s error=%s; falling back to action=get",
+                            "LIST_EMBEDDED_METADATA_UNUSABLE hash=%s error=%s; trying top-level FileStats/cache before action=get",
                             h, str(exc).replace("\n", " ")[:400],
                         )
 
+                # MatriX.145 already returns FileStats on the top-level list
+                # status object for loaded torrents. Prefer this one-call path.
+                stage = "list_file_stats"
+                list_files = extract_list_file_stats(item)
+                if list_files is not None:
+                    try:
+                        listed = dict(item)
+                        listed, category_value = _resolve_snapshot_category(listed, item, h, stage)
+                        snapshot = parse_snapshot(listed, h)
+                        self.source_stats["list_file_stats"] += 1
+                        accept_snapshot(snapshot, category_value, stage)
+                        continue
+                    except ValueError as exc:
+                        LOG.warning(
+                            "LIST_FILE_STATS_UNUSABLE hash=%s error=%s; checking source cache",
+                            h, str(exc).replace("\n", " ")[:400],
+                        )
+
+                # DB-only entries have no FileStats in action=list. Reuse the
+                # previously validated full inventory while refreshing mutable
+                # fields from the current action=list item.
+                stage = "source_cache"
+                cached_files = cached_file_stats(self.source_cache_records.get(h))
+                if cached_files is not None:
+                    try:
+                        cached_item = dict(item)
+                        cached_item["file_stats"] = cached_files
+                        cached_item, category_value = _resolve_snapshot_category(cached_item, item, h, stage)
+                        snapshot = parse_snapshot(cached_item, h)
+                        self.source_stats["source_cache_hits"] += 1
+                        accept_snapshot(snapshot, category_value, stage)
+                        continue
+                    except ValueError as exc:
+                        LOG.warning(
+                            "SOURCE_CACHE_ENTRY_UNUSABLE hash=%s error=%s; falling back to action=get",
+                            h, str(exc).replace("\n", " ")[:400],
+                        )
+                self.source_stats["source_cache_misses"] += 1
+
                 stage = "action_get"
+                self.source_stats["action_get"] += 1
                 detail = self.client.get_torrent(h)
                 list_meta = parse_json_object(get_field(item, "data", default=None))
                 detail_meta = parse_json_object(get_field(detail, "data", default=None))
@@ -3023,12 +3176,15 @@ class SyncCoordinator:
                     LOG.info("METADATA_LOAD hash=%s reason=file_stats_absent", h)
 
                 stage = "metadata_load"
+                self.source_stats["playlist_loads"] += 1
                 self.client.load_torrent_metadata(h)
                 deadline = time.monotonic() + self.cfg["torrserver"]["metadata_wait_sec"]
                 last_error: Exception | None = None
                 while True:
                     stage = "metadata_wait"
                     try:
+                        self.source_stats["action_get"] += 1
+                        self.source_stats["metadata_poll_gets"] += 1
                         refreshed = self.client.get_torrent(h)
                         refreshed, category_value = _resolve_snapshot_category(
                             refreshed, item, h, stage,
@@ -3056,6 +3212,11 @@ class SyncCoordinator:
                     "TORRENT_DEFERRED hash=%s stage=%s reason_code=%s error_type=%s reason=%s retry=next_run",
                     h, stage, reason_code, type(exc).__name__, reason,
                 )
+        # Keep still-listed deferred items; prune only confirmed disappearances.
+        self.source_inventory_hashes = {h for _, h in inventory}
+        for cached_hash in list(self.source_cache_records):
+            if cached_hash not in self.source_inventory_hashes:
+                self.source_cache_records.pop(cached_hash, None)
         return snapshots, deferred_hashes
 
     def _collect_required_files(self, snap: TorrentSnapshot) -> set[int]:
@@ -3081,7 +3242,20 @@ class SyncCoordinator:
         old_by_output = {o.spec.name: manifest for o, (_, manifest) in zip(self.outputs, manifests)}
 
         previous_categories = _trusted_manifest_categories(old_by_output.values())
+        cache = load_source_cache(self.source_cache_path, self.client.base_url)
+        self.source_cache_records = cache["torrents"]
         raw_snapshots, deferred_hashes = self._get_snapshot_list(previous_categories)
+        if not self.dry_run:
+            cache_to_write = {
+                "version": SOURCE_CACHE_VERSION,
+                "torrserver_url": self.client.base_url,
+                "torrents": self.source_cache_records,
+            }
+            try:
+                if write_source_cache_if_changed(self.source_cache_path, cache_to_write):
+                    LOG.info("SOURCE_CACHE_UPDATED path=%s torrents=%d", self.source_cache_path, len(self.source_cache_records))
+            except OSError:
+                LOG.exception("SOURCE_CACHE_WRITE_FAILED path=%s", self.source_cache_path)
         snapshot_map: dict[str, TorrentSnapshot] = {s.hash: s for s in raw_snapshots}
 
         # Category, metadata, IDs and magnets remain those already present on
@@ -3158,9 +3332,13 @@ class SyncCoordinator:
 
         elapsed = time.monotonic() - started
         LOG.info(
-            "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d nfo_reused=%d outputs=%s elapsed=%.2fs",
+            "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d nfo_reused=%d outputs=%s source_requests=list:%d,get:%d,playlist:%d,polls:%d cache_hits=%d cache_misses=%d list_embedded=%d list_file_stats=%d elapsed=%.2fs",
             len(snapshot_map) + len(deferred_hashes), len(quality_ready), unresolved + len(deferred_hashes), totals["created"], totals["updated"], totals["unchanged"], totals["failed"],
-            resolver.stats["nfo_reused"], enabled_names, elapsed,
+            resolver.stats["nfo_reused"], enabled_names,
+            self.source_stats.get("action_list", 0), self.source_stats.get("action_get", 0),
+            self.source_stats.get("playlist_loads", 0), self.source_stats.get("metadata_poll_gets", 0),
+            self.source_stats.get("source_cache_hits", 0), self.source_stats.get("source_cache_misses", 0),
+            self.source_stats.get("list_embedded", 0), self.source_stats.get("list_file_stats", 0), elapsed,
         )
         return 0
 
@@ -3233,6 +3411,9 @@ def load_config(path: Path) -> dict[str, Any]:
     tag_warning = str(notifications.get("tag_warning", "warnings")).strip()
     tag_critical = str(notifications.get("tag_critical", "critical")).strip()
     state_path = str(notifications.get("state_path", "/var/lib/torr2strm/notification_state.json")).strip()
+    source_cache_path = str(sync.get("source_cache_path", "/var/lib/torr2strm/source_cache.json")).strip()
+    if not source_cache_path:
+        raise ValueError("[sync].source_cache_path must not be empty")
     if notify_enabled:
         if not apprise_url.startswith(("http://", "https://")):
             raise ValueError("[notifications].apprise_url must start with http:// or https:// when enabled")
@@ -3256,6 +3437,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "sync": {
             "tv_unmatched_season": int(sync.get("tv_unmatched_season", 0)),
             "video_extensions": normalized_extensions,
+            "source_cache_path": str(Path(source_cache_path).expanduser()),
         },
         "notifications": {
             "enabled": notify_enabled,
