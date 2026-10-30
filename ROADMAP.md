@@ -761,7 +761,7 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 
 ### Post-deployment follow-up — correct the STRM `content_sha256` digest (non-blocking for v1.4.16)
 
-The first production acceptance on 2026-10-30 exposed a metadata inconsistency in both output implementations. The manifest currently computes `content_sha256` as SHA-256 of `url + "\\n"`, but `_write_strm()` writes the URL without a trailing newline. A reference-host audit confirmed this for every managed STRM checked (2,859 Jellyfin and 1,932 Kodi): the file content exactly equals the manifest URL, while the stored `content_sha256` equals the digest of the URL plus a newline.
+The first production acceptance on 2026-10-30 exposed a metadata inconsistency in both output implementations. The manifest currently computes `content_sha256` as SHA-256 of `url + "\n"`, but `_write_strm()` writes the URL without a trailing newline. A reference-host audit confirmed this for every managed STRM checked (2,859 Jellyfin and 1,932 Kodi): the file content exactly equals the manifest URL, while the stored `content_sha256` equals the digest of the URL plus a newline.
 
 This does **not** currently impair synchronization or FAST_PATH: `_output_manifest_intact()` validates each STRM by comparing its actual text directly with the manifest `url`; it does not use `content_sha256`. No STRM/NFO files were rewritten during the first production sync. The manifest field is nevertheless misleading and should describe the exact bytes written to disk.
 
