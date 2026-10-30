@@ -2849,7 +2849,7 @@ class OutputRunner:
                 tvshow_rel,
             )
             tvshow_nfo_rel = tvshow_rel
-            tvshow_nfo_sha256 = sha256_text(tvshow_nfo_content)
+            tvshow_nfo_sha256 = sha256_file_text(tvshow_path, tvshow_nfo_content)
         else:
             tvshow_nfo_rel = None
 
