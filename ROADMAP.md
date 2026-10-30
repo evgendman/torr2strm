@@ -698,7 +698,7 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 
 ## Phase 20 — Reduce redundant TorrServer detail requests and cache immutable FileStats (v1.4.16)
 
-**Status: implementation, automated CI, and reference-host copy-based acceptance completed; official publication and production installation pending.** This phase responds to the 2026-10-29 reference-host run, which processed 635 torrents in 311.28 seconds, and the five-minute service cadence. The goal is to prevent a growing library of unchanged torrents from spending most of each synchronization interval on repeated detail retrieval.
+**Status: implementation, automated CI, reference-host copy-based acceptance, and GitHub publication completed; production installation pending.** This phase responds to the 2026-10-29 reference-host run, which processed 635 torrents in 311.28 seconds, and the five-minute service cadence. The goal is to prevent a growing library of unchanged torrents from spending most of each synchronization interval on repeated detail retrieval.
 
 ### Problem and code findings
 
@@ -750,7 +750,8 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - [x] A copy of the existing production output trees was reconciled with no STRM/NFO content, path, mtime, or permission changes. Only the two manifests received the expected integrity-hash additions; the next run entered `FAST_PATH=true`.
 - [x] Self-repair was exercised by deleting a managed STRM and modifying a shared tvshow.nfo; full reconciliation repaired both, and the next run returned to the fast path.
 - [x] Source-disappearance cleanup and opt-in Jellyfin reverse deletion remain covered by passing regression tests (`test_source_cache_prunes_only_after_confirmed_inventory_disappearance`, `test_jellyfin_reverse_delete_is_authoritative_and_kodi_is_skipped`).
-- [ ] Publish v1.4.16 and install it on reference MINI-Ubuntu; verify the installed version, first production sync and persistent cache before restarting the enabled timer.
+- [x] Publish v1.4.16 as a GitHub Release after all CI and copy-based acceptance checks passed.
+- [ ] Install v1.4.16 on reference MINI-Ubuntu; verify the installed version, first production sync and persistent cache before restarting the enabled timer.
 
 
 
