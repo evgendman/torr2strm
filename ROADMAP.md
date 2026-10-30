@@ -752,9 +752,5 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - [x] Source-disappearance cleanup and opt-in Jellyfin reverse deletion remain covered by passing regression tests (`test_source_cache_prunes_only_after_confirmed_inventory_disappearance`, `test_jellyfin_reverse_delete_is_authoritative_and_kodi_is_skipped`).
 - [ ] Publish v1.4.16 and install it on reference MINI-Ubuntu; verify the installed version, first production sync and persistent cache before restarting the enabled timer.
 
-- [x] Python compilation and the complete automated regression suite pass in GitHub Actions (65 tests passed on 2026-10-30).
-- [ ] CI confirms manifest schema v5 and NFO format v3 remain compatible; no migration or clean rebuild is required.
-- [ ] On MINI-Ubuntu, dry-run and controlled live runs report source-request counters; a second run demonstrates cache hits and a reduction in `action=get`/metadata-load activity.
-- [ ] Compare complete manifests and STRM/NFO trees before and after the optimized run; confirm no unplanned path, playback URL, category, season/episode, NFO, mtime, or permission changes.
-- [ ] Confirm disappearance cleanup and opt-in Jellyfin reverse deletion remain correct. Only after these checks should v1.4.16 be tagged and published.
+
 
