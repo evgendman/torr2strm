@@ -11,6 +11,11 @@
 - Add a guarded whole-inventory fast path: skip quality/NFO resolution and output regeneration only when the complete input/config signature matches and every managed STRM/NFO remains intact; missing or modified files trigger normal self-repair.
 - Keep manifest schema v5, NFO format v3, media-tree contracts, output reconciliation, and reverse-deletion safety unchanged.
 
+### v1.4.16 candidate validation — 2026-10-30
+
+- GitHub Actions CI passed on commit `a215a5c891fe2bf75428b88844e1b7abd588a191`: Python compileall succeeded and all 65 regression tests passed.
+- The candidate is committed on `main`, but it is not tagged or published. Reference MINI-Ubuntu remains on v1.4.15 pending dry-run/live acceptance.
+
 ## 1.4.15
 
 - Fix season/episode parsing by evaluating TorrServer file paths and torrent titles as independent sources. Complete coordinates in a file path take precedence; an explicit path season is preserved before any title-level fallback is considered.

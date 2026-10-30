@@ -729,7 +729,7 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - [x] Add a whole-inventory projection signature and FAST_PATH guarded by output manifest and managed-file integrity checks.
 - [x] Validate shared tvshow.nfo content hashes and reject symlinked managed output paths before using FAST_PATH.
 - [x] Add regressions for direct list FileStats, cache reuse with changed mutable metadata, invalid-cache recovery, disappearance pruning, fast-path entry, STRM repair and tvshow.nfo repair.
-- [ ] Complete CI and review all existing regression tests.
+- [x] GitHub Actions CI passed on 2026-10-30: Python compileall and all 65 regression tests passed.
 
 ### Regression coverage and acceptance
 
@@ -743,7 +743,7 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 
 ### Exit criteria
 
-- [ ] Python compilation and the complete automated regression suite pass in GitHub Actions.
+- [x] Python compilation and the complete automated regression suite pass in GitHub Actions (65 tests passed on 2026-10-30).
 - [ ] CI confirms manifest schema v5 and NFO format v3 remain compatible; no migration or clean rebuild is required.
 - [ ] On MINI-Ubuntu, dry-run and controlled live runs report source-request counters; a second run demonstrates cache hits and a reduction in `action=get`/metadata-load activity.
 - [ ] Compare complete manifests and STRM/NFO trees before and after the optimized run; confirm no unplanned path, playback URL, category, season/episode, NFO, mtime, or permission changes.
