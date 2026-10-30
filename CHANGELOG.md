@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.16
+
+- Avoid redundant TorrServer detail requests by parsing top-level FileStats already returned by `action=list`.
+- Add a persistent, infohash-keyed source cache for complete FileStats inventories so previously processed DB-only torrents do not need repeated `action=get`, `/playlist` metadata loads, or polling.
+- Refresh mutable title, category and custom metadata from the current `action=list` response on every run; cached data is limited to validated file IDs, paths, lengths and original FileStats order.
+- Keep source-cache failures recoverable and prune entries only after a successful inventory confirms that a torrent disappeared.
+- Add source-request/cache counters to the `DONE` summary and regressions for direct list FileStats, cache reuse, mutable metadata refresh, invalid-cache recovery, and disappearance pruning.
+- Keep manifest schema v5, NFO format v3, media-tree contracts, output reconciliation, and reverse-deletion safety unchanged.
+
 ## 1.4.15
 
 - Fix season/episode parsing by evaluating TorrServer file paths and torrent titles as independent sources. Complete coordinates in a file path take precedence; an explicit path season is preserved before any title-level fallback is considered.

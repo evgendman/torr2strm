@@ -37,6 +37,7 @@ Jellyfin is the authoritative/read-write output. Kodi/Elementum is read-only: de
 |---|---|---|
 | `tv_unmatched_season` | `0` | Season number used when a TV file's season cannot be inferred from its path/title. `0` corresponds to Specials-style season semantics. |
 | `video_extensions` | See `etc/config.toml.example` | List of file extensions eligible for video STRM generation and cached-NFO lookup. Extensions may be written with or without the leading dot. Audio, subtitle and image files do not get their own video STRM. |
+| `source_cache_path` | `/var/lib/torr2strm/source_cache.json` | Private persistent cache of complete TorrServer FileStats inventories, keyed by full infohash. Only immutable file IDs, relative paths, lengths and original order are cached; mutable title/category/custom metadata are refreshed from `action=list` each run. The cache is disposable and rebuilt on misses or validation failures. |
 
 ### Quality decision rules
 

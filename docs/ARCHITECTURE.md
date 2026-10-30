@@ -2,12 +2,14 @@
 
 ## Source of truth and processing path
 
-TorrServer is the sole source of truth for torrent membership, category, info hash, metadata and FileStats. A synchronization pass reads only data already present on TorrServer, reuses cached NFO streamdetails where available, then reconciles independent Jellyfin and Kodi/Elementum projections.
+TorrServer is the sole source of truth for torrent membership, info hash, category and mutable metadata. Every run reads current membership and mutable fields through action=list. The synchronizer uses top-level FileStats from the list item when available; otherwise it reuses a validated complete FileStats inventory cached by infohash in /var/lib/torr2strm/source_cache.json. The separate source cache stores only file IDs, relative paths, lengths and original order—not title, category, IDs or custom metadata. New/uncached torrents retain the action=get and metadata-load fallback. The synchronizer then reuses cached NFO streamdetails where available and reconciles independent Jellyfin and Kodi/Elementum projections.
 
 ```text
-TorrServer torrent list + FileStats + custom metadata
+TorrServer action=list inventory + current custom metadata
         ↓
-category only from TorrServer category field (unknown → _uncategorized)
+top-level FileStats → infohash-keyed cached FileStats → action=get/metadata-load fallback
+        ↓
+category only from current TorrServer category field (unknown → _uncategorized)
         ↓
 read ffprobe / structured metadata / title already present in TorrServer data
         ↓
@@ -73,7 +75,7 @@ Playback semantics do not change:
 
 Each output has its own root marker and manifest. The manifest is the source of truth mapping each STRM/NFO to full torrent hash, source file path/id/order, and output-relative paths. Kodi's shared `tvshow.nfo` is referenced separately by each release record using that series root, so it is removed only after the last reference disappears. Filenames and short hashes are display aids, never deletion identities.
 
-Kodi series/season directories may be shared by several torrents. The synchronizer reconciles each torrent's entries independently; it removes only old managed files no longer referenced by any new record and prunes directories only when empty. Removing one torrent cannot delete another release's STRM or a still-used tvshow.nfo. Source torrents disappearing from TorrServer are reflected in all enabled outputs on the next sync.
+Kodi series/season directories may be shared by several torrents. The synchronizer reconciles each torrent's entries independently; it removes only old managed files no longer referenced by any new record and prunes directories only when empty. Removing one torrent cannot delete another release's STRM or a still-used tvshow.nfo. Source torrents disappearing from TorrServer are reflected in all enabled outputs on the next sync. The independent source cache is pruned only after a successful complete inventory confirms disappearance; listed-but-deferred torrents retain their cache entries.
 
 ## NFO contract
 

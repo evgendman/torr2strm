@@ -695,3 +695,54 @@ During the full reference-host dry-run on 2026-10-29, the Kodi reconciler logged
 
 This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.15 passed CI and the full reference-host dry-run, the parser/path results were reviewed, and the dry-run did not write output trees or manifests. Complete Jellyfin removal visibility before a future release that needs the improved auditability; do not silently present the current dry-run log as a complete inventory of planned Jellyfin operations.
 
+
+## Phase 20 — Reduce redundant TorrServer detail requests and cache immutable FileStats (v1.4.16)
+
+**Status: implementation committed to main; automated CI and reference-host acceptance are pending.** This phase responds to the 2026-10-29 reference-host run, which processed 635 torrents in 311.28 seconds, and the five-minute service cadence. The goal is to prevent a growing library of unchanged torrents from spending most of each synchronization interval on repeated detail retrieval.
+
+### Problem and code findings
+
+- `SyncCoordinator._get_snapshot_list()` first calls TorrServer `action=list`. The prior code recognized FileStats only when nested under `data.TorrServer`; it did not parse top-level `file_stats` returned by TorrServer's `TorrentStatus`.
+- TorrServer MatriX.145 creates FileStats in `Torrent.Status()` whenever metainfo is loaded. Its `action=list` response therefore already contains the full file inventory for loaded torrents. A separate `action=get` in this case retrieves the same status unnecessarily.
+- DB-only TorrServer records may have no FileStats in `action=list`. The previous implementation could then call `action=get`, trigger metadata loading through `/playlist`, and poll `action=get` until FileStats appeared. Previously processed torrents could repeat this work on later runs because the full source file inventory was not independently persisted.
+- A BitTorrent infohash identifies metainfo. For a stable infohash, file IDs, paths, sizes and FileStats order are stable. Mutable TorrServer fields (title, category, custom `data` including IDs/quality metadata, and magnet) must still be read from the current inventory each run.
+- Output manifests are not a sufficient complete source cache: each output records only the files materialized into its own tree, which may omit non-video files and the original complete FileStats order required by Elementum `oindex`.
+
+### Agreed implementation
+
+1. Prefer all usable information already returned by `action=list`: the existing embedded `data.TorrServer` form first, then top-level `file_stats`. A valid top-level list item must not cause another `action=get`.
+2. Add a separate persistent source cache at `/var/lib/torr2strm/source_cache.json`, configurable through `[sync].source_cache_path`. Cache only the complete validated FileStats inventory (file ID, relative path, length, original order), keyed by the full infohash and scoped to the configured TorrServer URL. Do not treat cached title/category/custom metadata as authoritative.
+3. When `action=list` omits FileStats for a previously processed infohash, reconstruct the current snapshot by combining the current list item's mutable fields with cached file inventory. A cache hit avoids `action=get`, `/playlist`, and metadata polling.
+4. Retain the existing `action=get` → `/playlist` → refreshed `action=get` fallback for new torrents, invalid/missing cache entries, malformed list metadata, and cache misses. Cache full FileStats only after successful validation.
+5. Treat the cache as a disposable optimization, never as source of truth for membership or mutable metadata. On a successfully retrieved complete inventory, prune entries only for hashes confirmed absent; retain cache entries for listed-but-deferred torrents. A failed inventory request must not prune the cache.
+6. A corrupt, obsolete, or server-mismatched cache degrades to a cache miss and rebuilds from TorrServer without deleting managed output. Cache-write failure is logged but does not fail an otherwise valid sync.
+7. Add per-run source diagnostics to `DONE`: list/get/playlist/poll counts, cache hits/misses, and list snapshots obtained from embedded or top-level FileStats. Do not log metadata payloads or full file inventories.
+8. Preserve category fallback/defer semantics, quality/NFO resolution, Jellyfin and Kodi output contracts, STRM/NFO self-repair, source-disappearance cleanup, and opt-in Jellyfin reverse deletion via `action=rem`. Never use `action=drop`.
+
+### Current v1.4.16 implementation
+
+- [x] Add top-level list FileStats parsing and avoid detail calls when the list item already has a valid inventory.
+- [x] Add versioned, SHA-256-validated source cache with full infohash keys and TorrServer URL scope.
+- [x] Refresh mutable metadata from the current list item on cache hits.
+- [x] Keep cache entries for listed-but-deferred torrents and prune only after a successful list confirms disappearance.
+- [x] Add cache configuration, systemd state directory, and source-request/cache counters.
+- [x] Add first regressions for direct list FileStats, cache reuse with changed mutable metadata, invalid-cache recovery, and disappearance pruning.
+- [ ] Complete CI and review all existing regression tests.
+
+### Regression coverage and acceptance
+
+- A top-level `action=list` item containing FileStats produces a complete snapshot with zero `action=get` calls and preserves source FileStats order.
+- A first DB-only/minimal-list run fetches details once and writes a complete cache; the next run uses that cache without `action=get`, `/playlist`, or polling.
+- A cache hit still observes changed title, category and custom metadata from `action=list`; cached mutable metadata must never override current fields.
+- Invalid cache version, malformed file rows, checksum mismatch, or cache bound to another TorrServer URL falls back to the established detail-fetch path.
+- A cache entry is retained when a still-listed torrent is deferred, and removed only after a successful inventory confirms source disappearance. Global list failure must preserve the cache and all prior output manifests.
+- Existing category-defer, missing-output repair, source-disappearance cleanup, Jellyfin reverse-delete, Kodi read-only, and repeated-run idempotency regressions continue to pass.
+
+### Exit criteria
+
+- [ ] Python compilation and the complete automated regression suite pass in GitHub Actions.
+- [ ] CI confirms manifest schema v5 and NFO format v3 remain compatible; no migration or clean rebuild is required.
+- [ ] On MINI-Ubuntu, dry-run and controlled live runs report source-request counters; a second run demonstrates cache hits and a reduction in `action=get`/metadata-load activity.
+- [ ] Compare complete manifests and STRM/NFO trees before and after the optimized run; confirm no unplanned path, playback URL, category, season/episode, NFO, mtime, or permission changes.
+- [ ] Confirm disappearance cleanup and opt-in Jellyfin reverse deletion remain correct. Only after these checks should v1.4.16 be tagged and published.
+

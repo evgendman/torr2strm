@@ -1,10 +1,15 @@
 # Current state
 
+Release candidate: v1.4.16 is committed to main for Phase 20 (TorrServer request reduction). It parses top-level FileStats from `action=list` and persists a separate, infohash-keyed source FileStats cache at `/var/lib/torr2strm/source_cache.json`. Mutable title/category/custom metadata remain sourced from the current TorrServer inventory on every run. Source-request counters are included in the DONE summary. Manifest schema v5 and NFO format v3 are unchanged. Automated CI and reference MINI-Ubuntu dry-run/live acceptance are pending; v1.4.16 is not tagged or published and has not been installed. The reference host remains on v1.4.15; no host configuration, service/timer, TorrServer inventory, output root, or manifest has been changed by this candidate.
+
+Release v1.4.15 was published and installed on reference MINI-Ubuntu on 2026-10-29. Its controlled live sync completed successfully over 635 torrents in 311.28 seconds.
+
 Release candidate: v1.4.15 prepared on branch `phase-19-season-parser-v1.4.15` for Phase 19 season/episode parser reliability. The candidate updates `VERSION` and `RELEASE_VERSION`, includes direct parser tests and Jellyfin/Kodi end-to-end regression coverage, and leaves manifest schema v5 and NFO format v3 unchanged. GitHub Actions CI has passed Python compilation and all 59 tests on draft PR #22. The change is not yet merged, published, or installed; reference-host dry-run and acceptance remain pending. MINI-Ubuntu remains on v1.4.14, with no host, timer, configuration, TorrServer inventory, output-root, or manifest changes.
 
 Repository release: v1.4.14 published on 2026-10-27 and installed on reference MINI-Ubuntu on 2026-10-27. The official archive checksum, Python compilation, all 56 tests, GitHub Actions CI, and release workflow passed. The installed code matches the official v1.4.14 source. First live sync completed successfully (`torrents=397 quality_ready=397 quality_unresolved=0 created=0 updated=0 unchanged=794 failed=0`). The timer was restored on reference MINI-Ubuntu on 2026-10-27 to the original monotonic schedule (`OnBootSec=2min`, `OnUnitActiveSec=5min`) matching `systemd/torr2strm.timer` on main. `systemd-analyze verify` passed; the timer is active/enabled. The follow-up service run exited 0 at 22:42:57 +05 with `torrents=431 quality_ready=431 quality_unresolved=0 created=0 updated=0 unchanged=862 failed=0`, and the timer remained armed for 22:45:20 +05. This is an operational scheduling choice, not a confirmed fix for a proven defect in the previous timer. The published v1.4.14 tag/archive contains the same original monotonic timer.
 Manifest schema: v5.
 NFO format: v3.
+Source FileStats cache (v1.4.16 candidate): /var/lib/torr2strm/source_cache.json (separate from Jellyfin/Kodi manifests).
 
 Reference deployment paths:
 - /opt/torr2strm/torr2strm.py
