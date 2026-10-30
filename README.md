@@ -1,12 +1,12 @@
-# torr2strm v1.4.15
+# torr2strm v1.4.16
 
 TorrServer -> multiple materialized STRM/NFO trees.
 
 Development plan: [ROADMAP.md](ROADMAP.md).
 
-**Release status:** v1.4.15 was published and accepted on reference MINI-Ubuntu on 2026-10-29. The controlled live sync processed 635 torrents with zero failures; post-sync validation passed for both output manifests and the corrected season/episode paths. See [CHANGELOG.md](CHANGELOG.md) for the acceptance record.
+**Release status:** v1.4.16 has passed GitHub Actions CI (66 tests) and reference MINI-Ubuntu acceptance in temporary copies of the existing Jellyfin/Kodi output trees. The cache, no-op fast path, and self-repair checks passed without changing production output files. Official publication and installation on the reference host are pending; the host remains on v1.4.15 until installation is completed. See [CHANGELOG.md](CHANGELOG.md) for the acceptance record.
 
-TorrServer is the sole source of truth. The service reads its category, metadata and FileStats, then materializes independent Jellyfin and Kodi/Elementum output trees. No external metadata provider is queried.
+TorrServer is the sole source of truth. The service reads its category, metadata and FileStats, then materializes independent Jellyfin and Kodi/Elementum output trees. A persistent cache stores only immutable FileStats inventory; mutable title/category/custom metadata continue to come from the current TorrServer list. No external metadata provider is queried.
 
 ## Output model
 
@@ -172,7 +172,9 @@ Recoverable media-information failures no longer prevent STRMs from being materi
 
 ## Upgrade and deployment
 
-Software version: v1.4.15. Manifest format v5; NFO format v3. This release fixes season/episode parsing from TorrServer file paths and torrent titles, including underscore-delimited coordinates, full-digit validation, and source-aware fallback precedence. The v1.4.14 category-stability behavior and v1.4.13 structured Apprise notifications are retained. Explicit unsupported categories still map to _uncategorized; category is never guessed. The target modes remain 0666 for files and 0777 for directories. No manifest/schema migration or clean rebuild is required.
+Software version: v1.4.16. Manifest format v5; NFO format v3. In addition to the v1.4.15 parser and earlier category/notification fixes, this release parses top-level FileStats from TorrServer `action=list` and stores complete immutable file inventories in a separate cache at `/var/lib/torr2strm/source_cache.json`. Mutable metadata is refreshed from the current list on every run. Cache hits avoid repeated `action=get`, `/playlist`, and metadata polling. An integrity-guarded whole-inventory fast path skips output regeneration only when the source/config signature matches and all managed STRM/NFO files, manifests, directories and permissions validate. Missing or modified outputs force full reconciliation and repair. Explicit unsupported categories still map to _uncategorized; category is never guessed. The target modes remain 0666 for files and 0777 for directories. Manifest v5 and NFO v3 are retained; no clean rebuild or schema migration is required.
+
+On the first run after upgrading, the source cache is populated and existing manifests gain hashes for the actual NFO bytes on disk. Version-only generated-header differences are preserved without rewriting the NFO files. Subsequent unchanged runs can use the fast path.
 
 For an in-place upgrade, preserve `/etc/torr2strm/config.toml`, TorrServer's inventory and both configured output trees. The installer stops the timer and service and preserves the timer's enabled/disabled state, but does not start the timer. Run the installed version check and a `--dry-run` first. Review any `STRM_COLLISION_RESOLVED` / `STRM_COLLISION_HASH_EXTENDED` entries and confirm there is no `STRM_COLLISION_UNRESOLVED` event before the first real synchronization. Re-enable the timer only after accepting the resulting output.
 
