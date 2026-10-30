@@ -1741,7 +1741,12 @@ def cached_file_stats(record: Any) -> list[dict[str, Any]] | None:
 
 
 def _empty_source_cache(torrserver_url: str) -> dict[str, Any]:
-    return {"version": SOURCE_CACHE_VERSION, "torrserver_url": torrserver_url, "torrents": {}}
+    return {
+        "version": SOURCE_CACHE_VERSION,
+        "torrserver_url": torrserver_url,
+        "torrents": {},
+        "projection_signature": None,
+    }
 
 
 def load_source_cache(path: Path, torrserver_url: str) -> dict[str, Any]:
@@ -1764,7 +1769,15 @@ def load_source_cache(path: Path, torrserver_url: str) -> dict[str, Any]:
     if not isinstance(torrents, dict):
         LOG.warning("SOURCE_CACHE_UNUSABLE path=%s reason=invalid_torrents_map; rebuilding from TorrServer", path)
         return _empty_source_cache(torrserver_url)
-    return {"version": SOURCE_CACHE_VERSION, "torrserver_url": torrserver_url, "torrents": torrents}
+    projection_signature = data.get("projection_signature")
+    if not isinstance(projection_signature, str):
+        projection_signature = None
+    return {
+        "version": SOURCE_CACHE_VERSION,
+        "torrserver_url": torrserver_url,
+        "torrents": torrents,
+        "projection_signature": projection_signature,
+    }
 
 
 def write_source_cache_if_changed(path: Path, data: dict[str, Any]) -> bool:
@@ -3013,6 +3026,7 @@ class SyncCoordinator:
             cfg["sync"].get("source_cache_path", "/var/lib/torr2strm/source_cache.json")
         ).expanduser()
         self.source_cache_records: dict[str, Any] = {}
+        self.source_projection_signature: str | None = None
         self.source_inventory_hashes: set[str] = set()
         self.source_stats: dict[str, int] = {}
         self.outputs: list[OutputRunner] = []
@@ -3219,6 +3233,160 @@ class SyncCoordinator:
                 self.source_cache_records.pop(cached_hash, None)
         return snapshots, deferred_hashes
 
+    def _projection_signature(self, snapshots: dict[str, TorrentSnapshot]) -> str:
+        """Fingerprint all inputs that can affect either generated output tree."""
+        output_config = {
+            output.spec.name: {
+                "root": str(output.root),
+                "manifest": output.spec.manifest_rel.as_posix(),
+                "playback": output.spec.playback,
+                "remove_on_missing": output.spec.remove_on_missing,
+                "max_removals": output.spec.max_removals,
+            }
+            for output in self.outputs
+        }
+        inventory = []
+        for h, snap in sorted(snapshots.items()):
+            inventory.append({
+                "hash": h,
+                "title": snap.title,
+                "category": snap.category,
+                "metadata": snap.metadata,
+                "magnet": snap.magnet,
+                "files": [
+                    {
+                        "id": item.file_id,
+                        "path": item.path,
+                        "length": item.length,
+                        "order": item.order,
+                    }
+                    for item in sorted(snap.files, key=lambda value: value.order)
+                ],
+            })
+        payload = {
+            "application_version": VERSION,
+            "manifest_version": MANIFEST_VERSION,
+            "nfo_format_version": NFO_FORMAT_VERSION,
+            "sync": {
+                "tv_unmatched_season": self.cfg["sync"]["tv_unmatched_season"],
+                "video_extensions": sorted(self.cfg["sync"]["video_extensions"]),
+            },
+            "outputs": output_config,
+            "inventory": inventory,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return sha256_text(encoded)
+
+    @staticmethod
+    def _expected_output_hashes(snapshots: dict[str, TorrentSnapshot], extensions: set[str]) -> set[str]:
+        return {
+            h for h, snap in snapshots.items()
+            if any(is_video(item.path, extensions) for item in snap.files)
+        }
+
+    @staticmethod
+    def _regular_managed_file(path: Path) -> bool:
+        try:
+            return path.is_file() and not path.is_symlink() and (path.stat().st_mode & 0o777) == 0o666
+        except OSError:
+            return False
+
+    @staticmethod
+    def _managed_directory(path: Path) -> bool:
+        try:
+            return path.is_dir() and not path.is_symlink() and (path.stat().st_mode & 0o777) == 0o777
+        except OSError:
+            return False
+
+    def _output_manifest_intact(
+        self,
+        output: OutputRunner,
+        manifest: dict[str, Any],
+        expected_hashes: set[str],
+    ) -> bool:
+        """Check managed projections cheaply before skipping a full regeneration pass."""
+        records = manifest.get("torrents")
+        if not isinstance(records, dict) or set(records) != expected_hashes:
+            return False
+
+        for h, record in records.items():
+            if not isinstance(record, dict) or record.get("hash") != h:
+                return False
+            if record.get("mode") != output.spec.name:
+                return False
+            directory = record.get("directory")
+            if not isinstance(directory, str) or not directory:
+                return False
+            try:
+                directory_path = safe_join(output.root, *PurePosixPath(directory).parts)
+            except (ValueError, TypeError):
+                return False
+            if not self._managed_directory(directory_path):
+                return False
+
+            directories = record.get("directories", [])
+            if not isinstance(directories, list):
+                return False
+            for rel_dir in directories:
+                if not isinstance(rel_dir, str) or not rel_dir:
+                    return False
+                try:
+                    path = safe_join(output.root, *PurePosixPath(rel_dir).parts)
+                except (ValueError, TypeError):
+                    return False
+                if not self._managed_directory(path):
+                    return False
+
+            files = record.get("files")
+            if not isinstance(files, dict) or not files:
+                return False
+            for rel_strm, file_record in files.items():
+                if not isinstance(rel_strm, str) or not rel_strm or not isinstance(file_record, dict):
+                    return False
+                try:
+                    strm_path = safe_join(output.root, *PurePosixPath(rel_strm).parts)
+                except (ValueError, TypeError):
+                    return False
+                if not self._regular_managed_file(strm_path):
+                    return False
+                expected_url = file_record.get("url")
+                if not isinstance(expected_url, str):
+                    return False
+                try:
+                    if strm_path.read_text(encoding="utf-8") != expected_url:
+                        return False
+                except (OSError, UnicodeDecodeError):
+                    return False
+
+                nfo_rel = file_record.get("nfo")
+                if nfo_rel is not None:
+                    if not isinstance(nfo_rel, str) or not nfo_rel:
+                        return False
+                    try:
+                        nfo_path = safe_join(output.root, *PurePosixPath(nfo_rel).parts)
+                    except (ValueError, TypeError):
+                        return False
+                    expected_nfo_hash = file_record.get("nfo_sha256")
+                    if not self._regular_managed_file(nfo_path) or not isinstance(expected_nfo_hash, str):
+                        return False
+                    try:
+                        if sha256_text(nfo_path.read_text(encoding="utf-8")) != expected_nfo_hash:
+                            return False
+                    except (OSError, UnicodeDecodeError):
+                        return False
+
+            tvshow_rel = record.get("tvshow_nfo")
+            if tvshow_rel is not None:
+                if not isinstance(tvshow_rel, str) or not tvshow_rel:
+                    return False
+                try:
+                    tvshow_path = safe_join(output.root, *PurePosixPath(tvshow_rel).parts)
+                except (ValueError, TypeError):
+                    return False
+                if not self._regular_managed_file(tvshow_path):
+                    return False
+        return True
+
     def _collect_required_files(self, snap: TorrentSnapshot) -> set[int]:
         videos = [f for f in snap.files if is_video(f.path, self.cfg["sync"]["video_extensions"])]
         if not videos:
@@ -3244,19 +3412,34 @@ class SyncCoordinator:
         previous_categories = _trusted_manifest_categories(old_by_output.values())
         cache = load_source_cache(self.source_cache_path, self.client.base_url)
         self.source_cache_records = cache["torrents"]
+        self.source_projection_signature = cache.get("projection_signature")
         raw_snapshots, deferred_hashes = self._get_snapshot_list(previous_categories)
-        if not self.dry_run:
-            cache_to_write = {
-                "version": SOURCE_CACHE_VERSION,
-                "torrserver_url": self.client.base_url,
-                "torrents": self.source_cache_records,
-            }
-            try:
-                if write_source_cache_if_changed(self.source_cache_path, cache_to_write):
-                    LOG.info("SOURCE_CACHE_UPDATED path=%s torrents=%d", self.source_cache_path, len(self.source_cache_records))
-            except OSError:
-                LOG.exception("SOURCE_CACHE_WRITE_FAILED path=%s", self.source_cache_path)
         snapshot_map: dict[str, TorrentSnapshot] = {s.hash: s for s in raw_snapshots}
+        if not deferred_hashes and len(snapshot_map) == len(self.source_inventory_hashes):
+            current_signature = self._projection_signature(snapshot_map)
+            expected_hashes = self._expected_output_hashes(snapshot_map, self.cfg["sync"]["video_extensions"])
+            projections_intact = all(
+                self._output_manifest_intact(output, old_by_output[output.spec.name], expected_hashes)
+                for output in self.outputs
+            )
+            if self.source_projection_signature == current_signature and projections_intact:
+                unchanged = sum(len(old_by_output[output.spec.name].get("torrents", {})) for output in self.outputs)
+                LOG.info(
+                    "FAST_PATH inventory=%d outputs=%s reason=signature_match_and_managed_files_intact",
+                    len(snapshot_map), enabled_names,
+                )
+                elapsed = time.monotonic() - started
+                LOG.info(
+                    "DONE torrents=%d quality_ready=%d quality_unresolved=0 created=0 updated=0 unchanged=%d failed=0 nfo_reused=0 outputs=%s source_requests=list:%d,get:%d,playlist:%d,polls:%d cache_hits=%d cache_misses=%d list_embedded=%d list_file_stats=%d fast_path=true elapsed=%.2fs",
+                    len(snapshot_map), len(expected_hashes), unchanged, enabled_names,
+                    self.source_stats.get("action_list", 0), self.source_stats.get("action_get", 0),
+                    self.source_stats.get("playlist_loads", 0), self.source_stats.get("metadata_poll_gets", 0),
+                    self.source_stats.get("source_cache_hits", 0), self.source_stats.get("source_cache_misses", 0),
+                    self.source_stats.get("list_embedded", 0), self.source_stats.get("list_file_stats", 0), elapsed,
+                )
+                return 0
+            if self.source_projection_signature == current_signature:
+                LOG.info("FAST_PATH_DECLINED reason=managed_output_drift_or_manifest_mismatch; running_full_reconciliation")
 
         # Category, metadata, IDs and magnets remain those already present on
         # TorrServer. No external enrichment pass is performed.
@@ -3309,6 +3492,7 @@ class SyncCoordinator:
         retained_hashes = set(deferred_hashes) | quality_deferred_hashes
 
         removed_hashes: set[str] = set()
+        output_failures = 0
         totals = {"created": 0, "updated": 0, "unchanged": 0, "failed": unresolved + len(deferred_hashes)}
         # Jellyfin is authoritative for reverse deletion and is intentionally processed first.
         ordered_outputs = sorted(self.outputs, key=lambda o: 0 if o.spec.name == "jellyfin" else 1)
@@ -3327,12 +3511,36 @@ class SyncCoordinator:
             totals["updated"] += updated
             totals["unchanged"] += unchanged
             totals["failed"] += failed
+            output_failures += failed
             if output.spec.name == "jellyfin" and output.removed_hashes:
                 removed_hashes.update(output.removed_hashes)
 
+        if not self.dry_run:
+            # Persist a whole-inventory projection signature only when every
+            # listed torrent has a definitive outcome and every output succeeded.
+            # A later run must still validate managed files before taking FAST_PATH.
+            projection_signature = None
+            if not deferred_hashes and not quality_deferred_hashes and output_failures == 0:
+                projection_signature = self._projection_signature(snapshot_map)
+            cache_to_write = {
+                "version": SOURCE_CACHE_VERSION,
+                "torrserver_url": self.client.base_url,
+                "torrents": self.source_cache_records,
+                "projection_signature": projection_signature,
+            }
+            try:
+                if write_source_cache_if_changed(self.source_cache_path, cache_to_write):
+                    LOG.info(
+                        "SOURCE_CACHE_UPDATED path=%s torrents=%d projection_signature=%s",
+                        self.source_cache_path, len(self.source_cache_records),
+                        "set" if projection_signature else "cleared",
+                    )
+            except OSError:
+                LOG.exception("SOURCE_CACHE_WRITE_FAILED path=%s", self.source_cache_path)
+
         elapsed = time.monotonic() - started
         LOG.info(
-            "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d nfo_reused=%d outputs=%s source_requests=list:%d,get:%d,playlist:%d,polls:%d cache_hits=%d cache_misses=%d list_embedded=%d list_file_stats=%d elapsed=%.2fs",
+            "DONE torrents=%d quality_ready=%d quality_unresolved=%d created=%d updated=%d unchanged=%d failed=%d nfo_reused=%d outputs=%s source_requests=list:%d,get:%d,playlist:%d,polls:%d cache_hits=%d cache_misses=%d list_embedded=%d list_file_stats=%d fast_path=false elapsed=%.2fs",
             len(snapshot_map) + len(deferred_hashes), len(quality_ready), unresolved + len(deferred_hashes), totals["created"], totals["updated"], totals["unchanged"], totals["failed"],
             resolver.stats["nfo_reused"], enabled_names,
             self.source_stats.get("action_list", 0), self.source_stats.get("action_get", 0),

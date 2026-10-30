@@ -7,6 +7,7 @@
 - Refresh mutable title, category and custom metadata from the current `action=list` response on every run; cached data is limited to validated file IDs, paths, lengths and original FileStats order.
 - Keep source-cache failures recoverable and prune entries only after a successful inventory confirms that a torrent disappeared.
 - Add source-request/cache counters to the `DONE` summary and regressions for direct list FileStats, cache reuse, mutable metadata refresh, invalid-cache recovery, and disappearance pruning.
+- Add a guarded whole-inventory fast path: skip quality/NFO resolution and output regeneration only when the complete input/config signature matches and every managed STRM/NFO remains intact; missing or modified files trigger normal self-repair.
 - Keep manifest schema v5, NFO format v3, media-tree contracts, output reconciliation, and reverse-deletion safety unchanged.
 
 ## 1.4.15

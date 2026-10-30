@@ -285,6 +285,45 @@ def test_source_cache_reuses_file_stats_but_refreshes_mutable_list_metadata():
             assert record["metadata"]["tmdbid"] == "9876"
 
 
+def test_unchanged_inventory_uses_fast_path_and_missing_strm_forces_repair():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        h = "5" * 40
+        source = torrent(
+            h=h, title="Fast Path Film 2025", category="movie",
+            paths=["Fast.Path.Film.mkv"], data={"tmdbId": 1124},
+        )
+        client = FakeClient([source])
+        config = cfg(base / "jelly", base / "kodi")
+        assert run(config, client) == 0
+        assert client.get_calls == [h]
+
+        import io
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger = logging.getLogger("torr2strm")
+        logger.addHandler(handler)
+        try:
+            coordinator = SyncCoordinator(config, client, dry_run=False)
+            assert coordinator.run() == 0
+        finally:
+            logger.removeHandler(handler)
+        assert coordinator.source_stats["source_cache_hits"] == 1
+        assert client.get_calls == [h]
+        assert "FAST_PATH inventory=1" in stream.getvalue()
+
+        jelly_manifest = json.loads(
+            ((base / "jelly") / ".torr2strm" / "manifest.json").read_text(encoding="utf-8")
+        )
+        strm_rel = next(iter(jelly_manifest["torrents"][h]["files"]))
+        (base / "jelly" / strm_rel).unlink()
+
+        repair = SyncCoordinator(config, client, dry_run=False)
+        assert repair.run() == 0
+        assert client.get_calls == [h]
+        assert (base / "jelly" / strm_rel).is_file()
+
+
 def test_invalid_source_cache_falls_back_to_torrserver_and_rebuilds():
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
@@ -1738,6 +1777,9 @@ def test_permanent_no_video_skip_cleans_old_managed_outputs():
             h=h, title="Film without video", category="movie",
             paths=["notes.txt"], data={"tmdbId": 1124},
         )
+        # A stable infohash cannot change its metainfo. Model an authoritative
+        # list entry carrying fresh FileStats instead of a DB-only cache hit.
+        client.list_torrents = lambda: [dict(client.torrents[h])]
         assert run(c, client) == 0
         for root, manifest in manifests.items():
             records = json.loads(manifest.read_text(encoding="utf-8"))["torrents"]
