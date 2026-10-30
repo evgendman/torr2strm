@@ -726,7 +726,9 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - [x] Refresh mutable metadata from the current list item on cache hits.
 - [x] Keep cache entries for listed-but-deferred torrents and prune only after a successful list confirms disappearance.
 - [x] Add cache configuration, systemd state directory, and source-request/cache counters.
-- [x] Add first regressions for direct list FileStats, cache reuse with changed mutable metadata, invalid-cache recovery, and disappearance pruning.
+- [x] Add a whole-inventory projection signature and FAST_PATH guarded by output manifest and managed-file integrity checks.
+- [x] Validate shared tvshow.nfo content hashes and reject symlinked managed output paths before using FAST_PATH.
+- [x] Add regressions for direct list FileStats, cache reuse with changed mutable metadata, invalid-cache recovery, disappearance pruning, fast-path entry, STRM repair and tvshow.nfo repair.
 - [ ] Complete CI and review all existing regression tests.
 
 ### Regression coverage and acceptance
@@ -734,6 +736,7 @@ This follow-up is intentionally **non-blocking for v1.4.15**: the released v1.4.
 - A top-level `action=list` item containing FileStats produces a complete snapshot with zero `action=get` calls and preserves source FileStats order.
 - A first DB-only/minimal-list run fetches details once and writes a complete cache; the next run uses that cache without `action=get`, `/playlist`, or polling.
 - A cache hit still observes changed title, category and custom metadata from `action=list`; cached mutable metadata must never override current fields.
+- An unchanged complete inventory plus intact manifests/STRM/NFO files skips quality resolution and output planning; missing/modified outputs, shared tvshow.nfo drift, manifest mismatch, symlinked managed paths, or changed inventory force full reconciliation.
 - Invalid cache version, malformed file rows, checksum mismatch, or cache bound to another TorrServer URL falls back to the established detail-fetch path.
 - A cache entry is retained when a still-listed torrent is deferred, and removed only after a successful inventory confirms source disappearance. Global list failure must preserve the cache and all prior output manifests.
 - Existing category-defer, missing-output repair, source-disappearance cleanup, Jellyfin reverse-delete, Kodi read-only, and repeated-run idempotency regressions continue to pass.

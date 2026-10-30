@@ -2626,6 +2626,7 @@ class OutputRunner:
             desired[rel_strm] = item_record
 
         tvshow_nfo_rel: str | None = None
+        tvshow_nfo_sha256: str | None = None
         if normalized_tv:
             group_key = (snap.category, snap.quality or "1080p", identity)
             canonical_hash = self.kodi_series_canonical_hash_by_identity.get(group_key)
@@ -2635,13 +2636,15 @@ class OutputRunner:
             # for the quality root; sibling torrents must not overwrite it.
             if snap.hash == canonical_hash:
                 representative_nfo = nfo_contents_by_file_id.get(primary.file_id)
+                tvshow_nfo_content = self._tvshow_nfo_content(snap, identity, representative_nfo)
                 self._write_nfo(
                     tvshow_path,
-                    self._tvshow_nfo_content(snap, identity, representative_nfo),
+                    tvshow_nfo_content,
                     snap.hash,
                     snap.title,
                     tvshow_nfo_rel,
                 )
+                tvshow_nfo_sha256 = sha256_text(tvshow_nfo_content)
 
         ids = provider_ids(snap.metadata, snap.title)
         metadata_record = {f"{kind}id": value for kind, value in ids.items()}
@@ -2655,6 +2658,7 @@ class OutputRunner:
             "magnet": snap.magnet or constructed_magnet(snap.hash, snap.title),
             "directory": rel_torrent_dir,
             "tvshow_nfo": tvshow_nfo_rel,
+            "tvshow_nfo_sha256": tvshow_nfo_sha256,
             "mode": self.spec.name,
             "files": desired,
             "directories": sorted(desired_dirs),
@@ -2819,20 +2823,23 @@ class OutputRunner:
                 "media_info_source": source,
             }
 
+        tvshow_nfo_sha256: str | None = None
         if snap.category == "tv" and provider_ids_for_snapshot(snap):
             tvshow_path = safe_join(torrent_dir, "tvshow.nfo")
             tvshow_rel = tvshow_path.relative_to(self.root).as_posix()
+            tvshow_nfo_content = self._tvshow_nfo_content(
+                snap,
+                streamdetails_nfo=nfo_contents_by_file_id.get(primary.file_id),
+            )
             self._write_nfo(
                 tvshow_path,
-                self._tvshow_nfo_content(
-                    snap,
-                    streamdetails_nfo=nfo_contents_by_file_id.get(primary.file_id),
-                ),
+                tvshow_nfo_content,
                 snap.hash,
                 snap.title,
                 tvshow_rel,
             )
             tvshow_nfo_rel = tvshow_rel
+            tvshow_nfo_sha256 = sha256_text(tvshow_nfo_content)
         else:
             tvshow_nfo_rel = None
 
@@ -2862,6 +2869,7 @@ class OutputRunner:
             "magnet": snap.magnet or constructed_magnet(snap.hash, snap.title),
             "directory": rel_torrent_dir,
             "tvshow_nfo": tvshow_nfo_rel,
+            "tvshow_nfo_sha256": tvshow_nfo_sha256,
             "mode": self.spec.name,
             "files": desired,
             "directories": sorted(desired_dirs),
@@ -3309,6 +3317,32 @@ class SyncCoordinator:
         if not isinstance(records, dict) or set(records) != expected_hashes:
             return False
 
+        shared_nfo_hashes: dict[str, str] = {}
+        referenced_shared_nfo: set[str] = set()
+        for record in records.values():
+            if not isinstance(record, dict):
+                return False
+            rel = record.get("tvshow_nfo")
+            digest = record.get("tvshow_nfo_sha256")
+            if rel is None:
+                continue
+            if not isinstance(rel, str) or not rel:
+                return False
+            referenced_shared_nfo.add(rel)
+            if digest is None:
+                # Non-canonical Kodi releases reference the canonical series
+                # sidecar but do not claim ownership of its content hash.
+                continue
+            if not isinstance(digest, str):
+                return False
+            prior = shared_nfo_hashes.get(rel)
+            if prior is not None and prior != digest:
+                return False
+            shared_nfo_hashes[rel] = digest
+        if referenced_shared_nfo != set(shared_nfo_hashes):
+            # Older output manifests need one reconciliation to add the hashes.
+            return False
+
         for h, record in records.items():
             if not isinstance(record, dict) or record.get("hash") != h:
                 return False
@@ -3319,7 +3353,8 @@ class SyncCoordinator:
                 return False
             try:
                 directory_path = safe_join(output.root, *PurePosixPath(directory).parts)
-            except (ValueError, TypeError):
+                output._assert_no_symlink(directory_path)
+            except Exception:
                 return False
             if not self._managed_directory(directory_path):
                 return False
@@ -3332,7 +3367,8 @@ class SyncCoordinator:
                     return False
                 try:
                     path = safe_join(output.root, *PurePosixPath(rel_dir).parts)
-                except (ValueError, TypeError):
+                    output._assert_no_symlink(path)
+                except Exception:
                     return False
                 if not self._managed_directory(path):
                     return False
@@ -3345,7 +3381,8 @@ class SyncCoordinator:
                     return False
                 try:
                     strm_path = safe_join(output.root, *PurePosixPath(rel_strm).parts)
-                except (ValueError, TypeError):
+                    output._assert_no_symlink(strm_path)
+                except Exception:
                     return False
                 if not self._regular_managed_file(strm_path):
                     return False
@@ -3364,7 +3401,8 @@ class SyncCoordinator:
                         return False
                     try:
                         nfo_path = safe_join(output.root, *PurePosixPath(nfo_rel).parts)
-                    except (ValueError, TypeError):
+                        output._assert_no_symlink(nfo_path)
+                    except Exception:
                         return False
                     expected_nfo_hash = file_record.get("nfo_sha256")
                     if not self._regular_managed_file(nfo_path) or not isinstance(expected_nfo_hash, str):
@@ -3381,9 +3419,18 @@ class SyncCoordinator:
                     return False
                 try:
                     tvshow_path = safe_join(output.root, *PurePosixPath(tvshow_rel).parts)
-                except (ValueError, TypeError):
+                    output._assert_no_symlink(tvshow_path)
+                except Exception:
                     return False
                 if not self._regular_managed_file(tvshow_path):
+                    return False
+                expected_hash = shared_nfo_hashes.get(tvshow_rel)
+                if not isinstance(expected_hash, str):
+                    return False
+                try:
+                    if sha256_text(tvshow_path.read_text(encoding="utf-8")) != expected_hash:
+                        return False
+                except (OSError, UnicodeDecodeError):
                     return False
         return True
 

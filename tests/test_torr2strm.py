@@ -302,12 +302,15 @@ def test_unchanged_inventory_uses_fast_path_and_missing_strm_forces_repair():
         stream = io.StringIO()
         handler = logging.StreamHandler(stream)
         logger = logging.getLogger("torr2strm")
+        previous_level = logger.level
+        logger.setLevel(logging.INFO)
         logger.addHandler(handler)
         try:
             coordinator = SyncCoordinator(config, client, dry_run=False)
             assert coordinator.run() == 0
         finally:
             logger.removeHandler(handler)
+            logger.setLevel(previous_level)
         assert coordinator.source_stats["source_cache_hits"] == 1
         assert client.get_calls == [h]
         assert "FAST_PATH inventory=1" in stream.getvalue()
@@ -322,6 +325,48 @@ def test_unchanged_inventory_uses_fast_path_and_missing_strm_forces_repair():
         assert repair.run() == 0
         assert client.get_calls == [h]
         assert (base / "jelly" / strm_rel).is_file()
+
+
+def test_fast_path_detects_modified_tvshow_nfo_and_repairs_it():
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        h = "6" * 40
+        source = torrent(
+            h=h,
+            title="The Test Series S01E01 2025",
+            category="tv",
+            paths=["The.Test.Series.S01E01.mkv"],
+            data={"seriesTmdbId": 777001, "seriesTitle": "The Test Series", "seriesYear": 2025},
+        )
+        client = FakeClient([source])
+        config = cfg(base / "jelly", base / "kodi")
+        assert run(config, client) == 0
+
+        kodi_root = base / "kodi"
+        kodi_record = json.loads(
+            (kodi_root / ".torr2strm" / "manifest.json").read_text(encoding="utf-8")
+        )["torrents"][h]
+        tvshow_path = kodi_root / kodi_record["tvshow_nfo"]
+        assert tvshow_path.is_file()
+        original = tvshow_path.read_text(encoding="utf-8")
+        tvshow_path.write_text(original + "\n<!-- external modification -->\n", encoding="utf-8")
+
+        import io
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        logger = logging.getLogger("torr2strm")
+        previous_level = logger.level
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        try:
+            repair = SyncCoordinator(config, client, dry_run=False)
+            assert repair.run() == 0
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(previous_level)
+
+        assert "FAST_PATH_DECLINED" in stream.getvalue()
+        assert tvshow_path.read_text(encoding="utf-8") == original
 
 
 def test_invalid_source_cache_falls_back_to_torrserver_and_rebuilds():
