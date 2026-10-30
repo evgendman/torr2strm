@@ -74,6 +74,16 @@ def sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def sha256_file_text(path: Path, fallback: str) -> str:
+    """Hash the bytes actually retained on disk, falling back to planned text."""
+    try:
+        if path.is_file() and not path.is_symlink():
+            return sha256_text(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        pass
+    return sha256_text(fallback)
+
+
 def parse_json_object(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -2622,7 +2632,7 @@ class OutputRunner:
             }
             if snap.category != "tv":
                 item_record["nfo"] = rel_nfo
-                item_record["nfo_sha256"] = sha256_text(nfo_content)
+                item_record["nfo_sha256"] = sha256_file_text(nfo_path, nfo_content)
             desired[rel_strm] = item_record
 
         tvshow_nfo_rel: str | None = None
@@ -2644,7 +2654,7 @@ class OutputRunner:
                     snap.title,
                     tvshow_nfo_rel,
                 )
-                tvshow_nfo_sha256 = sha256_text(tvshow_nfo_content)
+                tvshow_nfo_sha256 = sha256_file_text(tvshow_path, tvshow_nfo_content)
 
         ids = provider_ids(snap.metadata, snap.title)
         metadata_record = {f"{kind}id": value for kind, value in ids.items()}
@@ -2819,7 +2829,7 @@ class OutputRunner:
                 "url": url,
                 "content_sha256": sha256_text(url + "\n"),
                 "nfo": rel_nfo,
-                "nfo_sha256": sha256_text(nfo_content),
+                "nfo_sha256": sha256_file_text(nfo_path, nfo_content),
                 "media_info_source": source,
             }
 
