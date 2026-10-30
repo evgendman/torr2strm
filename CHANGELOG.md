@@ -13,9 +13,13 @@
 
 ### v1.4.16 candidate validation — 2026-10-30
 
-- GitHub Actions CI passed on commit `a215a5c891fe2bf75428b88844e1b7abd588a191`: Python compileall succeeded and all 65 regression tests passed.
-- The candidate is committed on `main`, but it is not tagged or published. Reference MINI-Ubuntu remains on v1.4.15 pending dry-run/live acceptance.
-
+- Final GitHub Actions CI passed on commit `4ed684ea1ae2a67fae686ff81c857133bf6cb7ea`: Python compilation and all 66 regression tests passed.
+- Reference MINI-Ubuntu dry-run processed all 635 TorrServer inventory entries with `quality_ready=635` and `failed=0`. The initial cache-empty pass reported `list=1,get=1236,playlist=618,polls=618,cache_hits=0,cache_misses=618`; the 7 embedded and 10 top-level FileStats entries came directly from `action=list`.
+- An isolated cache warm-up against the live TorrServer populated 635 cache entries. The second run completed in 2.62 seconds with `get=0,playlist=0,polls=0,cache_hits=594,cache_misses=0,list_embedded=7,list_file_stats=34`, `unchanged=1270`, and `failed=0`.
+- A self-repair check deliberately removed a managed STRM and modified a shared Kodi `tvshow.nfo` in the isolated output tree. The fast path declined, full reconciliation restored both files, and the following run re-entered the fast path.
+- A production-like compatibility check used temporary copies of the current Jellyfin/Kodi output trees and manifests. The v1.4.16 reconciliation added no paths, removed no paths, and changed no STRM/NFO content, mtimes, or permissions; only the two manifests were updated with the new integrity hashes. A follow-up run completed in 2.46 seconds with `FAST_PATH=true`, `get=0,playlist=0,polls=0,cache_hits=618`, `unchanged=1270`, and `failed=0`.
+- The production `/etc/torr2strm/config.toml` and both production manifests retained their pre-test SHA-256 values. The reference host remains on v1.4.15 pending installation; its timer is enabled but currently stopped. No production output tree or TorrServer inventory was changed during candidate acceptance.
+- Manifest schema v5 and NFO format v3 remain unchanged. No clean rebuild or output-tree migration is required.
 ## 1.4.15
 
 - Fix season/episode parsing by evaluating TorrServer file paths and torrent titles as independent sources. Complete coordinates in a file path take precedence; an explicit path season is preserved before any title-level fallback is considered.
